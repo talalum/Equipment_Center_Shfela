@@ -45,7 +45,20 @@ def _check_production_config() -> list[str]:
     return warnings
 
 
+def _force_utf8_output() -> None:
+    """
+    כל הודעות המערכת בעברית. אם הפלט מנותב לקובץ בווינדוס, פייתון משתמש
+    בקידוד המקומי (cp1255) ושורת לוג בעברית מפילה את התהליך. כאן מכריחים UTF-8.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass  # לא כל stream תומך — לא סיבה להיכשל
+
+
 def main() -> int:
+    _force_utf8_output()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",

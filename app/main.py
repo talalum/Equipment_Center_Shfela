@@ -15,7 +15,29 @@ from app.parsing.normalize import normalize_sku
 from app.web import Request, Response, Router, make_wsgi_app, safe_redirect_target
 
 log = logging.getLogger(__name__)
-LOCAL_TZ = ZoneInfo(config.TZ_NAME)
+
+
+def _local_timezone(name: str):
+    """
+    אזור הזמן לתצוגה.
+
+    בווינדוס אין מסד אזורי זמן במערכת ההפעלה, ולכן ZoneInfo נכשל שם אלא אם
+    מותקנת חבילת tzdata. במקרה כזה נופלים לשעון של המחשב עצמו — עדיף להציג
+    שעה נכונה מהמערכת מאשר להפיל את השרת בגלל תצוגת תאריך.
+    """
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        fallback = datetime.now().astimezone().tzinfo
+        log.warning(
+            'לא נמצא אזור הזמן "%s" (נפוץ בווינדוס בלי חבילת tzdata) — '
+            "מוצג שעון המחשב במקום. להתקנה: pip install tzdata",
+            name,
+        )
+        return fallback
+
+
+LOCAL_TZ = _local_timezone(config.TZ_NAME)
 TEMPLATES_DIR = config.BASE_DIR / "app" / "templates"
 STATIC_DIR = config.BASE_DIR / "app" / "static"
 

@@ -36,12 +36,31 @@
 
 ## הרצה מקומית
 
-```bash
-pip install -r requirements.txt      # רק Jinja2 ו-PyYAML
-python -m app.server                 # http://localhost:8000
+דרוש פייתון 3.10 ומעלה.
+
+**Windows**
+```
+py -m pip install -r requirements.txt
+py -m app.server
 ```
 
-בהרצה ראשונה המערכת יוצרת את המסד ומייבאת אוטומטית את `data/Inventory_Report.csv`.
+**Mac / Linux**
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m app.server
+```
+
+ואז לפתוח **http://localhost:8000**. לעצירה: `Ctrl+C`.
+
+בהרצה ראשונה המערכת יוצרת את המסד ומייבאת אוטומטית את `data/Inventory_Report.csv` —
+בשורת הפקודה תופיע ההודעה `ייבוא ראשוני מקובץ התקן: נוספו 76`.
+
+> **ווינדוס:** לווינדוס אין מסד אזורי זמן משלה, ולכן `ZoneInfo("Asia/Jerusalem")` נכשל
+> שם. `requirements.txt` מתקין את חבילת `tzdata` בווינדוס בדיוק בשביל זה. גם אם היא
+> חסרה המערכת לא תקרוס — היא תיפול לשעון של המחשב ותרשום אזהרה.
+
+האזהרות על `APP_PASSWORD_HASH` ו-`SESSION_SECRET` בעלייה תקינות ומכוונות בהרצה מקומית;
+הן נדרשות רק לפני העלאה לענן.
 
 ### עם Docker
 
