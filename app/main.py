@@ -334,6 +334,34 @@ def review_create_item(request: Request, issuance_id: int, line_id: int) -> Resp
     return back(request, "/review")
 
 
+@router.post("/issuances/{issuance_id}/reanalyse")
+def issuance_reanalyse(request: Request, issuance_id: int) -> Response:
+    if (redirect := login_required(request)) is not None:
+        return redirect
+    changed, message = ingest.reanalyse_issuance(issuance_id)
+    flash(request, message, "success" if changed else "info")
+    return back(request, "/issuances")
+
+
+@router.post("/reanalyse-all")
+def reanalyse_all(request: Request) -> Response:
+    if (redirect := login_required(request)) is not None:
+        return redirect
+    counts = ingest.reanalyse_unapplied()
+    if not counts["total"]:
+        flash(request, "אין הנפקות שממתינות לניתוח מחדש.")
+    else:
+        flash(
+            request,
+            f"נותחו מחדש {counts['total']} הנפקות — "
+            f"{counts['applied']} נקלטו למלאי, "
+            f"{counts['needs_review']} ממתינות לאישור, "
+            f"{counts['ignored']} לא רלוונטיות.",
+            "success" if counts["applied"] else "info",
+        )
+    return back(request, "/issuances")
+
+
 @router.post("/review/{issuance_id}/approve")
 def review_approve(request: Request, issuance_id: int) -> Response:
     if (redirect := login_required(request)) is not None:

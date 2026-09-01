@@ -41,6 +41,102 @@ def synthetic_message_id(raw_text: str) -> str:
     return f"paste-{digest}"
 
 
+def _classify(
+    parsed: issuance_parser.ParsedIssuance, fmt: issuance_parser.EmailFormat
+) -> tuple[str, str | None, str, list[tuple[str, str, int, int | None]]]:
+    """
+    מחליט מה לעשות עם הנפקה שנפרסה, ומשייך כל שורה לפריט לפי מק"ט.
+
+    משותף לקליטה ראשונה ולניתוח מחדש, כדי ששני המסלולים לא יתפצלו לעולם.
+
+    סדר ההחלטה חשוב: בעבר בדיקת המרכז רצה ראשונה, ולכן מייל שלא נפרס כלל
+    קיבל "מרכז לא ידוע" וסומן ignored — כלומר נעלם בשקט עם הודעה מטעה.
+    """
+    notes: list[str] = list(parsed.errors)
+    lines: list[tuple[str, str, int, int | None]] = []
+    for line in parsed.lines:
+        item = repo.find_item_by_sku(line.raw_sku)
+        if item is None:
+            notes.append(f'מק"ט {line.raw_sku} ("{line.raw_name}") לא קיים במערכת.')
+        lines.append((line.raw_sku, line.raw_name, line.qty, item.id if item else None))
+
+    if not parsed.has_items_section:
+        return (
+            IGNORED,
+            "המייל אינו נראה כמו הודעת הנפקה — לא נמצאה בו רשימת מוצרים.",
+            "המייל אינו הודעת הנפקה ולכן לא נקלט.",
+            lines,
+        )
+    if parsed.center and not issuance_parser.center_matches(parsed, fmt):
+        return (
+            IGNORED,
+            f'ההנפקה שייכת ל"{parsed.center}" ולא ל"{fmt.expected_center}" — לא נכנסה למלאי.',
+            "המייל שייך למרכז ציוד אחר ולכן לא נקלט למלאי.",
+            lines,
+        )
+    if not parsed.center:
+        return (
+            NEEDS_REVIEW,
+            "\n".join([*notes, 'לא זוהתה שורת "מרכז ציוד" במייל — נדרש אישור ידני.']),
+            "לא זוהה מרכז הציוד במייל — ממתין לאישור.",
+            lines,
+        )
+    if notes:
+        return (
+            NEEDS_REVIEW,
+            "\n".join(notes),
+            "המייל ממתין לאישור — ראי את מסך הביקורת.",
+            lines,
+        )
+    return APPLIED, None, f"נקלטו {len(lines)} פריטים.", lines
+
+
+def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
+    """
+    מנתח מחדש הנפקה שכבר במסד, לפי גוף המייל המקורי שנשמר.
+
+    נחוץ אחרי שיפור בפרסר: הדדופליקציה לפי Message-ID מונעת משיכה חוזרת
+    של אותו מייל, ולכן בלי הפעולה הזו תיקון בקוד לא היה משפיע לעולם על
+    מיילים שכבר נקלטו — והם היו נשארים תקועים עם השגיאה הישנה.
+    """
+    issuance = repo.get_issuance(issuance_id)
+    if issuance is None:
+        return False, "ההנפקה לא נמצאה."
+
+    fmt = issuance_parser.load_format()
+    parsed = issuance_parser.parse(issuance.raw_text, fmt)
+    status, note, message, lines = _classify(parsed, fmt)
+
+    repo.replace_issuance_lines(issuance_id, lines)
+    repo.update_issuance_details(
+        issuance_id,
+        recipient=parsed.recipient,
+        issuer=parsed.issuer,
+        center=parsed.center,
+        status=status,
+        review_note=note,
+    )
+    changed = status != issuance.status
+    prefix = "השתנה: " if changed else "ללא שינוי: "
+    return changed, prefix + message
+
+
+def reanalyse_unapplied() -> dict[str, int]:
+    """
+    מנתח מחדש את כל ההנפקות שלא נקלטו למלאי.
+
+    לא נוגע בהנפקות שכבר נקלטו — הן תקינות, וניתוח מחדש שלהן היה עלול
+    לשנות מלאי קיים בלי שביקשו זאת.
+    """
+    counts = {"total": 0, "applied": 0, "needs_review": 0, "ignored": 0}
+    for issuance in repo.list_issuances((NEEDS_REVIEW, IGNORED), limit=1000):
+        reanalyse_issuance(issuance.id)
+        refreshed = repo.get_issuance(issuance.id)
+        counts["total"] += 1
+        counts[refreshed.status] += 1
+    return counts
+
+
 def ingest_issuance(
     raw_text: str,
     message_id: str,
@@ -60,38 +156,7 @@ def ingest_issuance(
     fmt = issuance_parser.load_format()
     parsed = issuance_parser.parse(raw_text, fmt)
 
-    notes: list[str] = list(parsed.errors)
-    lines: list[tuple[str, str, int, int | None]] = []
-    for line in parsed.lines:
-        item = repo.find_item_by_sku(line.raw_sku)
-        if item is None:
-            notes.append(f'מק"ט {line.raw_sku} ("{line.raw_name}") לא קיים במערכת.')
-        lines.append((line.raw_sku, line.raw_name, line.qty, item.id if item else None))
-
-    # סדר ההחלטה חשוב. בעבר בדיקת המרכז רצה ראשונה, ולכן מייל שלא נפרס כלל
-    # קיבל "מרכז לא ידוע" וסומן ignored — כלומר נעלם בשקט עם הודעה מטעה.
-    # עכשיו: רק מייל שברור שאינו הנפקה, או הנפקה של מרכז אחר *שזוהה בוודאות*,
-    # מסומן ignored. כל השאר מגיע לביקורת.
-    if not parsed.has_items_section:
-        status = IGNORED
-        note = "המייל אינו נראה כמו הודעת הנפקה — לא נמצאה בו רשימת מוצרים."
-        message = "המייל אינו הודעת הנפקה ולכן לא נקלט."
-    elif parsed.center and not issuance_parser.center_matches(parsed, fmt):
-        status = IGNORED
-        note = f'ההנפקה שייכת ל"{parsed.center}" ולא ל"{fmt.expected_center}" — לא נכנסה למלאי.'
-        message = "המייל שייך למרכז ציוד אחר ולכן לא נקלט למלאי."
-    elif not parsed.center:
-        status = NEEDS_REVIEW
-        note = "\n".join([*notes, 'לא זוהתה שורת "מרכז ציוד" במייל — נדרש אישור ידני.'])
-        message = "לא זוהה מרכז הציוד במייל — ממתין לאישור."
-    elif notes:
-        status = NEEDS_REVIEW
-        note = "\n".join(notes)
-        message = "המייל ממתין לאישור — ראי את מסך הביקורת."
-    else:
-        status = APPLIED
-        note = None
-        message = f"נקלטו {len(lines)} פריטים."
+    status, note, message, lines = _classify(parsed, fmt)
 
     stamp = (email_date or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     issuance_id = repo.insert_issuance(

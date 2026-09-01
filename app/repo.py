@@ -225,6 +225,36 @@ def insert_issuance(
     return issuance_id
 
 
+def replace_issuance_lines(issuance_id: int, lines: list[tuple[str, str, int, int | None]]) -> None:
+    """מחליף את שורות ההנפקה — לשימוש בניתוח מחדש של גוף המייל השמור."""
+    from app.db import transaction
+
+    with transaction() as conn:
+        conn.execute("DELETE FROM issuance_lines WHERE issuance_id = ?", (issuance_id,))
+        conn.executemany(
+            "INSERT INTO issuance_lines (issuance_id, raw_sku, raw_name, qty, item_id) VALUES (?, ?, ?, ?, ?)",
+            [(issuance_id, sku, name, qty, item_id) for sku, name, qty, item_id in lines],
+        )
+
+
+def update_issuance_details(
+    issuance_id: int,
+    recipient: str | None,
+    issuer: str | None,
+    center: str | None,
+    status: str,
+    review_note: str | None,
+) -> None:
+    connect().execute(
+        """
+        UPDATE issuances
+        SET recipient = ?, issuer = ?, center = ?, status = ?, review_note = ?
+        WHERE id = ?
+        """,
+        (recipient, issuer, center, status, review_note, issuance_id),
+    )
+
+
 def set_issuance_status(issuance_id: int, status: str, review_note: str | None) -> None:
     connect().execute(
         "UPDATE issuances SET status = ?, review_note = ? WHERE id = ?",
