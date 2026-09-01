@@ -24,12 +24,17 @@ class DBTestCase(unittest.TestCase):
         from app import config, db
 
         config.DB_PATH = os.environ["DB_PATH"]
+        # ברירת המחדל היא אתר בלי סיסמה. מחלקה שבודקת אימות מגדירה זאת בעצמה.
+        self._auth = (config.APP_PASSWORD_HASH, config.SESSION_SECRET)
+        config.APP_PASSWORD_HASH = ""
+        config.SESSION_SECRET = "unit-test-secret"
         db.reset_for_tests()
         db.init_db()
 
     def tearDown(self) -> None:
-        from app import db
+        from app import config, db
 
+        config.APP_PASSWORD_HASH, config.SESSION_SECRET = self._auth
         db.reset_for_tests()
         self._tmp.cleanup()
 

@@ -4,7 +4,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from app import env_file
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# נטען לפני קריאת ההגדרות. משתנה שכבר קיים בסביבה מנצח את הקובץ, כדי
+# שהגדרות של שירות האירוח יגברו בענן.
+ENV_PATH = Path(os.environ.get("ENV_FILE", BASE_DIR / ".env"))
+env_file.load(ENV_PATH)
 
 # --- מסד נתונים ---
 # קובץ SQLite. בענן חייב לשבת על דיסק קבוע (persistent volume), אחרת
