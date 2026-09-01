@@ -122,6 +122,14 @@ def main() -> int:
             updates["IMAP_USER"] = user
             updates["IMAP_PASSWORD"] = app_password
             print("  ✓ פרטי התיבה נשמרו.")
+
+            print("\nמתי למשוך מיילים?")
+            if _ask_yes_no("למשוך אוטומטית ברקע כל כמה דקות?", default=False):
+                updates["POLL_MINUTES"] = _ask("כל כמה דקות", existing.get("POLL_MINUTES", "5"))
+                print(f'  ✓ משיכה אוטומטית כל {updates["POLL_MINUTES"]} דקות.')
+            else:
+                updates["POLL_MINUTES"] = "0"
+                print('  ✓ רק בלחיצה על "משוך מיילים" באתר.')
         else:
             print("  דילגנו — לא הוזנו פרטים מלאים.")
     else:

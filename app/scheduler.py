@@ -27,12 +27,20 @@ def _loop() -> None:
 
 
 def start() -> bool:
-    """מפעיל את התזמון רק אם הוגדרו פרטי תיבה. אחרת המערכת עובדת בהדבקה ידנית."""
+    """
+    מפעיל משיכה מתוזמנת ברקע.
+
+    כבוי כשאין פרטי תיבה, וגם כש-POLL_MINUTES הוא 0 — מצב שבו המשיכה
+    מתבצעת רק בלחיצה על "משוך מיילים" בממשק.
+    """
     global _thread
     if _thread is not None:
         return True
     if not config.imap_configured():
         log.info("IMAP לא מוגדר — משיכה אוטומטית כבויה. מסך ההדבקה עובד כרגיל.")
+        return False
+    if config.POLL_MINUTES <= 0:
+        log.info('משיכה אוטומטית כבויה לפי ההגדרות — נמשך רק בלחיצה על "משוך מיילים".')
         return False
     _stop.clear()
     _thread = threading.Thread(target=_loop, name="mail-poller", daemon=True)
