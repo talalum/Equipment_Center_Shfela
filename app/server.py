@@ -41,7 +41,10 @@ def _check_production_config() -> list[str]:
             "חובה להגדיר לפני העלאה לענן."
         )
     if config.imap_configured() and not config.COOKIE_SECURE:
-        warnings.append("COOKIE_SECURE כבוי — להדליק כשהאתר רץ מאחורי HTTPS.")
+        warnings.append(
+            "COOKIE_SECURE כבוי — תקין ונדרש בהרצה מקומית. "
+            "להדליק רק כשהאתר עולה לענן מאחורי HTTPS."
+        )
     return warnings
 
 
