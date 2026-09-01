@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import email
+import re
 import unittest
 from email.message import EmailMessage
 from unittest import mock
@@ -10,7 +11,7 @@ from tests.base import SAMPLE_EMAIL
 
 from app import config
 from app.mail import fetcher
-from app.mail.fetcher import _message_date, extract_body, fetch_unseen, html_to_text
+from app.mail.fetcher import _message_date, extract_body, fetch_recent, html_to_text
 from app.parsing.issuance_parser import parse
 
 
@@ -77,6 +78,9 @@ class FakeIMAP:
         self.marked_seen: list[bytes] = []
         self.logged_in = False
         self.closed = False
+        self.searches: list[tuple] = []
+        self.header_fetches = 0
+        self.body_fetches = 0
 
     def __call__(self, host, port):  # מחליף את imaplib.IMAP4_SSL
         return self
@@ -88,13 +92,20 @@ class FakeIMAP:
     def select(self, folder):
         return ("OK", [b"1"])
 
-    def search(self, charset, criterion):
-        assert criterion == "UNSEEN"
+    def search(self, charset, *criteria):
+        self.searches.append(criteria)
         return ("OK", [b" ".join(str(i + 1).encode() for i in range(len(self.messages)))])
 
     def fetch(self, uid, spec):
-        assert b"PEEK" in spec.encode(), "חובה לקרוא ב-PEEK כדי לא לסמן כנקרא מוקדם מדי"
-        return ("OK", [(b"1 (BODY[] {n}", self.messages[int(uid) - 1]), b")"])
+        assert "PEEK" in spec, "חובה לקרוא ב-PEEK כדי לא לשנות את מצב התיבה"
+        raw = self.messages[int(uid) - 1]
+        if "HEADER.FIELDS" in spec:
+            self.header_fetches += 1
+            header = raw.split(b"\r\n\r\n", 1)[0].split(b"\n\n", 1)[0]
+            match = re.search(rb"(?im)^message-id:.*$", header)
+            return ("OK", [(b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {n}", (match.group(0) if match else b"")), b")"])
+        self.body_fetches += 1
+        return ("OK", [(b"1 (BODY[] {n}", raw), b")"])
 
     def store(self, uid, flags, value):
         self.marked_seen.append(uid)
@@ -107,7 +118,7 @@ class FakeIMAP:
         return ("BYE", [b""])
 
 
-class FetchUnseen(unittest.TestCase):
+class FetchRecent(unittest.TestCase):
     def setUp(self) -> None:
         self._user, self._password = config.IMAP_USER, config.IMAP_PASSWORD
         config.IMAP_USER, config.IMAP_PASSWORD = "box@gmail.com", "app-password"
@@ -125,50 +136,80 @@ class FetchUnseen(unittest.TestCase):
         msg.set_content(SAMPLE_EMAIL)
         return msg.as_bytes()
 
+    def _fetch(self, fake, **kwargs):
+        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
+            return fetch_recent(**kwargs)
+
+    def test_searches_by_date_not_by_unread_flag(self) -> None:
+        """
+        הרגרסיה המרכזית: חיפוש לפי UNSEEN אומר שמייל שמישהו כבר פתח
+        בתיבה לא ייאסף לעולם — הנפקה שנעלמת בשקט.
+        """
+        fake = FakeIMAP([self._message("<a@x>")])
+        self._fetch(fake)
+        self.assertEqual(len(fake.searches), 1)
+        self.assertEqual(fake.searches[0][0], "SINCE")
+        self.assertNotIn("UNSEEN", fake.searches[0])
+
+    def test_a_message_already_read_is_still_fetched(self) -> None:
+        fake = FakeIMAP([self._message("<already-read@x>")])
+        fake.marked_seen.append(b"1")  # כאילו מישהו פתח אותו בתיבה
+        emails = self._fetch(fake)
+        self.assertEqual(len(emails), 1)
+
+    def test_nothing_is_marked_as_read(self) -> None:
+        """קריאה מהתיבה לא משנה את מצבה — הדדופליקציה נשענת על המסד."""
+        fake = FakeIMAP([self._message("<a@x>"), self._message("<b@x>")])
+        self._fetch(fake)
+        self.assertEqual(fake.marked_seen, [])
+        self.assertTrue(fake.logged_in)
+        self.assertTrue(fake.closed)
+
     def test_uses_the_message_id_header(self) -> None:
         fake = FakeIMAP([self._message("<abc@mail.example>")])
-        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
-            emails = fetch_unseen()
+        emails = self._fetch(fake)
         self.assertEqual(len(emails), 1)
         self.assertEqual(emails[0].message_id, "<abc@mail.example>")
         self.assertEqual(parse(emails[0].body).errors, [])
 
+    def test_known_messages_skip_the_body_fetch(self) -> None:
+        """סריקה חוזרת חייבת להיות זולה: רק כותרות למיילים שכבר נקלטו."""
+        fake = FakeIMAP([self._message("<known@x>"), self._message("<fresh@x>")])
+        emails = self._fetch(fake, is_known=lambda mid: mid == "<known@x>")
+        self.assertEqual([e.message_id for e in emails], ["<fresh@x>"])
+        self.assertEqual(fake.header_fetches, 2)
+        self.assertEqual(fake.body_fetches, 1, "גוף נמשך רק למייל החדש")
+
+    def test_everything_is_new_when_no_filter_is_given(self) -> None:
+        fake = FakeIMAP([self._message("<a@x>"), self._message("<b@x>")])
+        self.assertEqual(len(self._fetch(fake)), 2)
+
     def test_email_without_message_id_gets_a_content_derived_id(self) -> None:
-        """
-        הנתיב הזה הסתיר באג: הוא ייבא ממודול שכבר לא קיים.
-        מייל בלי Message-ID עדיין חייב לקבל מזהה יציב, אחרת הדדופליקציה נשברת.
-        """
         fake = FakeIMAP([self._message(None)])
-        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
-            emails = fetch_unseen()
+        emails = self._fetch(fake)
         self.assertEqual(len(emails), 1)
         self.assertTrue(emails[0].message_id.startswith("paste-"))
         self.assertEqual(parse(emails[0].body).errors, [])
 
     def test_same_body_yields_the_same_id_twice(self) -> None:
         fake = FakeIMAP([self._message(None), self._message(None)])
-        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
-            emails = fetch_unseen()
+        emails = self._fetch(fake)
         self.assertEqual(emails[0].message_id, emails[1].message_id)
 
-    def test_messages_are_marked_seen_and_connection_closed(self) -> None:
-        fake = FakeIMAP([self._message("<a@x>"), self._message("<b@x>")])
-        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
-            fetch_unseen()
-        self.assertEqual(fake.marked_seen, [b"1", b"2"])
-        self.assertTrue(fake.logged_in)
-        self.assertTrue(fake.closed)
+    def test_id_less_message_can_also_be_skipped_as_known(self) -> None:
+        fake = FakeIMAP([self._message(None)])
+        seen = self._fetch(fake)[0].message_id
+        fake2 = FakeIMAP([self._message(None)])
+        self.assertEqual(self._fetch(fake2, is_known=lambda mid: mid == seen), [])
 
-    def test_mark_seen_can_be_disabled(self) -> None:
-        fake = FakeIMAP([self._message("<a@x>")])
-        with mock.patch.object(fetcher.imaplib, "IMAP4_SSL", fake):
-            fetch_unseen(mark_seen=False)
-        self.assertEqual(fake.marked_seen, [])
+    def test_results_are_chronological(self) -> None:
+        fake = FakeIMAP([self._message("<first@x>"), self._message("<second@x>")])
+        self.assertEqual([e.message_id for e in self._fetch(fake)], ["<first@x>", "<second@x>"])
 
     def test_missing_credentials_raise_a_clear_error(self) -> None:
         config.IMAP_USER = ""
         with self.assertRaises(RuntimeError) as ctx:
-            fetch_unseen()
+            fetch_recent()
         self.assertIn("חסרים פרטי חיבור", str(ctx.exception))
 
 
@@ -177,7 +218,7 @@ class SyncHandlesFailures(unittest.TestCase):
         """תקלת רשת או אימות לא אמורה להפיל את השרת."""
         from app import mail_sync
 
-        with mock.patch.object(fetcher, "fetch_unseen", side_effect=OSError("אין חיבור")):
+        with mock.patch.object(fetcher, "fetch_recent", side_effect=OSError("אין חיבור")):
             result = mail_sync.sync_once()
         self.assertIsNotNone(result.error)
         self.assertIn("שגיאה במשיכת מיילים", result.summary())

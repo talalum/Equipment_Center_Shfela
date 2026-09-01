@@ -69,7 +69,7 @@ class CheckMail(unittest.TestCase):
         code, output = self._run(FakeIMAP([]))
         self.assertEqual(code, 0)
         self.assertIn("החיבור הצליח", output)
-        self.assertIn("אין מיילים שלא נקראו", output)
+        self.assertIn("אין מיילים", output)
 
     def test_classifies_each_kind_of_message(self) -> None:
         code, output = self._run(

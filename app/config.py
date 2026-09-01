@@ -31,6 +31,9 @@ IMAP_USER = os.environ.get("IMAP_USER", "")
 IMAP_PASSWORD = os.environ.get("IMAP_PASSWORD", "")  # App Password של Gmail
 IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
 POLL_MINUTES = int(os.environ.get("POLL_MINUTES", "5"))
+# כמה ימים אחורה נסרקים בכל משיכה. גדול מספיק כדי להשלים תקופה שבה
+# המערכת הייתה כבויה; ספירה כפולה נמנעת ממילא לפי Message-ID.
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "30"))
 
 # --- אבטחה ---
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "")

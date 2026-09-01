@@ -6,7 +6,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from app import ingest
+from app import ingest, repo
 from app.mail import fetcher
 
 log = logging.getLogger(__name__)
@@ -54,7 +54,10 @@ def sync_once() -> SyncResult:
     try:
         result = SyncResult()
         try:
-            emails = fetcher.fetch_unseen()
+            # גוף המייל נמשך רק למיילים שעוד לא במסד — סריקה חוזרת זולה.
+            emails = fetcher.fetch_recent(
+                is_known=lambda mid: repo.find_issuance_by_message_id(mid) is not None
+            )
         except Exception as exc:  # רשת/אימות — לא מפיל את השרת
             log.exception("משיכת מיילים נכשלה")
             result.error = str(exc)

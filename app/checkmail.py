@@ -61,8 +61,8 @@ def main() -> int:
     print("\nמתחבר...\n")
 
     try:
-        # mark_seen=False — בדיקה לא אמורה לשנות את מצב התיבה.
-        emails = fetcher.fetch_unseen(mark_seen=False)
+        # בלי is_known — הבדיקה מציגה את כל מה שבחלון הזמן, גם מה שכבר נקלט.
+        emails = fetcher.fetch_recent()
     except Exception as exc:  # ההסבר חשוב יותר מ-traceback
         print("✗ החיבור נכשל.\n")
         print(_explain(exc))
@@ -72,12 +72,12 @@ def main() -> int:
     print("✓ החיבור הצליח.\n")
 
     if not emails:
-        print("אין מיילים שלא נקראו בתיבה.")
+        print(f"אין מיילים ב-{config.LOOKBACK_DAYS} הימים האחרונים בתיבה.")
         print("  אם ציפית למיילים — ודאי שמיילי ההנפקה באמת מגיעים לחשבון הזה,")
-        print("  ושהם עדיין מסומנים כלא-נקראו.\n")
+        print("  ושהם נשלחו בתקופה הזו.\n")
         return 0
 
-    print(f"נמצאו {len(emails)} מיילים שלא נקראו:\n")
+    print(f"נמצאו {len(emails)} מיילים ב-{config.LOOKBACK_DAYS} הימים האחרונים:\n")
     recognised = 0
     for item in emails[:20]:
         parsed = issuance_parser.parse(item.body)
@@ -92,7 +92,7 @@ def main() -> int:
         print(f"      {detail}")
 
     print(f"\nמתוכם {recognised} מזוהים כהנפקות של {issuance_parser.load_format().expected_center}.")
-    print("\nשום מייל לא סומן כנקרא ושום דבר לא נכנס למלאי — זו בדיקה בלבד.")
+    print("\nשום דבר לא נכנס למלאי ומצב התיבה לא השתנה — זו בדיקה בלבד.")
     print("לקליטה בפועל: להריץ את השרת וללחוץ '⟳ משוך מיילים'.\n")
     return 0
 

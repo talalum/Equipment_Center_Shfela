@@ -10,7 +10,8 @@ import imaplib
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
@@ -132,28 +133,58 @@ def _message_date(msg: Message) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]:
-    """
-    מושך מיילים שלא נקראו. מסמן כנקראים רק אחרי קריאה מוצלחת.
+_MESSAGE_ID_RE = re.compile(rb"^message-id:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
-    הדדופליקציה האמיתית היא לפי Message-ID במסד, ולכן גם אם דגל ה-Seen
-    יאבד — המלאי לא ייספר פעמיים.
+
+def _header_message_id(raw: bytes) -> str:
+    match = _MESSAGE_ID_RE.search(raw)
+    return _decode_header_value(match.group(1).decode("utf-8", "replace")).strip() if match else ""
+
+
+def fetch_recent(
+    is_known: Callable[[str], bool] | None = None,
+    days: int | None = None,
+    limit: int = 500,
+) -> list[FetchedEmail]:
+    """
+    מושך מיילים מהתקופה האחרונה, בלי תלות בדגל "נקרא".
+
+    למה לא לפי UNSEEN: אם מישהו פותח את התיבה ומציץ במייל הנפקה בזמן
+    שהמערכת כבויה, המייל מסומן כנקרא ולא היה נאסף לעולם — הנפקה שנעלמת
+    בשקט. במקום זה נסרקת חלון זמן קבוע, וההגנה מפני ספירה כפולה נשענת
+    על Message-ID שכבר קיים במסד.
+
+    is_known מקבל Message-ID ומחזיר האם הוא כבר נקלט. גוף המייל נמשך רק
+    עבור מיילים חדשים, ולכן סריקה חוזרת זולה.
     """
     if not config.imap_configured():
         raise RuntimeError("חסרים פרטי חיבור לתיבה (IMAP_USER / IMAP_PASSWORD).")
+
+    lookback = days if days is not None else config.LOOKBACK_DAYS
+    since = (datetime.now(timezone.utc) - timedelta(days=lookback)).strftime("%d-%b-%Y")
 
     results: list[FetchedEmail] = []
     conn = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
     try:
         conn.login(config.IMAP_USER, config.IMAP_PASSWORD)
         conn.select(config.IMAP_FOLDER)
-        status, data = conn.search(None, "UNSEEN")
+        status, data = conn.search(None, "SINCE", since)
         if status != "OK":
             raise RuntimeError(f"חיפוש בתיבה נכשל: {status}")
 
-        uids = data[0].split()[:limit]
+        # החדשים ביותר קודם, כדי שגם תיבה עמוסה תתעדכן קודם כל במה שרלוונטי.
+        uids = list(reversed(data[0].split()))[:limit]
         for uid in uids:
-            # BODY.PEEK כדי שהקריאה עצמה לא תסמן כנקרא — אנחנו מחליטים מתי.
+            # BODY.PEEK בלבד — הקריאה שלנו לעולם לא משנה את מצב התיבה.
+            status, head = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if status != "OK" or not head or not isinstance(head[0], tuple):
+                log.warning("לא ניתן לקרוא כותרות של המייל %r", uid)
+                continue
+
+            message_id = _header_message_id(head[0][1])
+            if message_id and is_known and is_known(message_id):
+                continue  # כבר נקלט — אין צורך למשוך את הגוף
+
             status, payload = conn.fetch(uid, "(BODY.PEEK[])")
             if status != "OK" or not payload or not isinstance(payload[0], tuple):
                 log.warning("לא ניתן לקרוא את המייל %r", uid)
@@ -161,11 +192,12 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
 
             msg = email.message_from_bytes(payload[0][1])
             body = extract_body(msg)
-            message_id = _decode_header_value(msg.get("Message-ID")).strip()
             if not message_id:
-                # מייל בלי Message-ID — נגזור מזהה יציב מהתוכן, כדי שהדדופליקציה
+                # מייל בלי Message-ID — מזהה יציב הנגזר מהתוכן, כדי שהדדופליקציה
                 # תמשיך לעבוד גם עליו.
                 message_id = synthetic_message_id(body)
+                if is_known and is_known(message_id):
+                    continue
 
             results.append(
                 FetchedEmail(
@@ -175,8 +207,6 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
                     body=body,
                 )
             )
-            if mark_seen:
-                conn.store(uid, "+FLAGS", "\\Seen")
     finally:
         try:
             conn.close()
@@ -184,4 +214,5 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
             pass
         conn.logout()
 
+    results.reverse()  # לקליטה לפי סדר כרונולוגי
     return results
