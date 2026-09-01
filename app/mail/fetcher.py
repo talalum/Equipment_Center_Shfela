@@ -18,6 +18,7 @@ from html import unescape
 from html.parser import HTMLParser
 
 from app import config
+from app.ingest import synthetic_message_id
 
 log = logging.getLogger(__name__)
 
@@ -159,19 +160,19 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
                 continue
 
             msg = email.message_from_bytes(payload[0][1])
+            body = extract_body(msg)
             message_id = _decode_header_value(msg.get("Message-ID")).strip()
             if not message_id:
-                # מייל בלי Message-ID — נגזור מזהה יציב מהתוכן.
-                from app.services.ingest import synthetic_message_id
-
-                message_id = synthetic_message_id(extract_body(msg))
+                # מייל בלי Message-ID — נגזור מזהה יציב מהתוכן, כדי שהדדופליקציה
+                # תמשיך לעבוד גם עליו.
+                message_id = synthetic_message_id(body)
 
             results.append(
                 FetchedEmail(
                     message_id=message_id,
                     date=_message_date(msg),
                     subject=_decode_header_value(msg.get("Subject")),
-                    body=extract_body(msg),
+                    body=body,
                 )
             )
             if mark_seen:
