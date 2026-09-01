@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}יומן תנועות — מרכז ציוד שפלה{% endblock %}
+
+{% block content %}
+<h1>יומן תנועות</h1>
+<p class="hint">
+  כל עריכה וכל איפוס לתקן נרשמים כאן. שום מספר לא נדרס — ההיסטוריה המלאה נשמרת,
+  וכך תמיד אפשר לראות למה פריט נמצא במצב שהוא נמצא בו.
+</p>
+
+{% if not adjustments %}
+  <p class="empty">עדיין לא בוצעו תנועות ידניות.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>תאריך</th>
+      <th class="num-col">מק"ט</th>
+      <th>פריט</th>
+      <th class="num-col">שינוי</th>
+      <th>סוג</th>
+      <th>סיבה</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for a in adjustments %}
+    <tr>
+      <td data-label="תאריך">{{ a.created_at | local_dt }}</td>
+      <td class="num-col" data-label='מק"ט'>{{ a.item_sku }}</td>
+      <td data-label="פריט">{{ a.item_name }}</td>
+      <td class="num-col" data-label="שינוי">
+        <span class="pill {{ 'ok' if a.delta > 0 else 'bad' }}">{{ signed(a.delta) }}</span>
+      </td>
+      <td data-label="סוג">{{ 'איפוס לתקן' if a.kind == 'reset' else 'עריכה' }}</td>
+      <td data-label="סיבה">{{ a.reason }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

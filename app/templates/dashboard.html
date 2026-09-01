@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}לוח מצב — מרכז ציוד שפלה{% endblock %}
+
+{% macro sort_link(key, label) -%}
+  {% set next_dir = 'asc' if (sort == key and direction == 'desc') else 'desc' %}
+  <a class="sort {% if sort == key %}active{% endif %}"
+     href="?q={{ q }}&only_short={{ only_short }}&sort={{ key }}&direction={{ next_dir }}">
+    {{ label }}{% if sort == key %}<span aria-hidden="true">{{ '▾' if direction == 'desc' else '▴' }}</span>{% endif %}
+  </a>
+{%- endmacro %}
+
+{% block content %}
+<section class="summary">
+  <div class="stat {% if shortage_count %}bad{% else %}good{% endif %}">
+    <span class="num">{{ shortage_count }}</span>
+    <span class="lbl">
+      {% if shortage_count == 0 %}✓ אין חוסרים
+      {% elif shortage_count == 1 %}⚠ פריט בחוסר
+      {% else %}⚠ פריטים בחוסר{% endif %}
+    </span>
+  </div>
+  <div class="stat">
+    <span class="num">{{ total_items }}</span>
+    <span class="lbl">פריטים במחסן</span>
+  </div>
+  {% if pending_count %}
+    <a class="stat pending" href="/review">
+      <span class="num">{{ pending_count }}</span>
+      <span class="lbl">⚠ {% if pending_count == 1 %}הנפקה ממתינה{% else %}ממתינות לאישור{% endif %}</span>
+    </a>
+  {% endif %}
+  <div class="stat meta">
+    <span class="lbl">
+      {% if last_sync %}
+        משיכה אחרונה: {{ last_sync.ran_at | local_dt }}<br>{{ last_sync.summary() }}
+      {% elif imap_configured %}
+        עדיין לא נמשכו מיילים.
+      {% else %}
+        משיכת מיילים לא מוגדרת — אפשר להדביק ידנית.
+      {% endif %}
+    </span>
+  </div>
+  <div class="actions">
+    <form method="post" action="/sync"><button class="btn">⟳ משוך מיילים</button></form>
+    <a class="btn ghost" href="/paste">הדבקת מייל</a>
+  </div>
+</section>
+
+<form class="toolbar" method="get" action="/">
+  <input type="search" name="q" value="{{ q }}" placeholder="🔍 חיפוש שם או מק&quot;ט…" aria-label="חיפוש">
+  <label class="check">
+    <input type="checkbox" name="only_short" value="1" {% if only_short %}checked{% endif %}
+           onchange="this.form.submit()">
+    הצג רק חוסרים
+  </label>
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="direction" value="{{ direction }}">
+  <button class="btn ghost">סנן</button>
+  {% if q or only_short %}<a class="btn ghost" href="/">נקה</a>{% endif %}
+</form>
+
+{% if shortage_count %}
+<form method="post" action="/items/reset-all" class="bulk"
+      data-confirm="לאפס לתקן את כל {{ shortage_count }} הפריטים בחוסר?">
+  <button class="btn ghost">⟲ איפוס לתקן לכל הפריטים בחוסר ({{ shortage_count }})</button>
+</form>
+{% endif %}
+
+{% if not statuses %}
+  <p class="empty">לא נמצאו פריטים תואמים.</p>
+{% else %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th class="num-col">{{ sort_link('sku', 'מק"ט') }}</th>
+      <th>{{ sort_link('name', 'שם פריט') }}</th>
+      <th class="num-col">{{ sort_link('standard', 'תקן') }}</th>
+      <th class="num-col">{{ sort_link('issued', 'הונפק') }}</th>
+      <th class="num-col">{{ sort_link('remaining', 'נשאר') }}</th>
+      <th class="num-col">{{ sort_link('shortage', 'חסר') }}</th>
+      <th class="act-col">פעולות</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for s in statuses %}
+    <tr class="{% if s.in_shortage %}short{% endif %}">
+      <td class="num-col" data-label='מק"ט'>{{ s.item.sku }}</td>
+      <td data-label="שם פריט">{{ s.item.name }}</td>
+      <td class="num-col" data-label="תקן">{{ s.item.standard_qty }}</td>
+      <td class="num-col" data-label="הונפק">{{ s.issued }}</td>
+      <td class="num-col" data-label="נשאר">{{ s.remaining }}</td>
+      <td class="num-col shortage" data-label="חסר">
+        {% if s.in_shortage %}
+          <span class="pill bad">⚠ {{ s.shortage }}</span>
+        {% else %}
+          <span class="pill ok" title="אין חוסר">✓</span>
+        {% endif %}
+      </td>
+      <td class="act-col">
+        <button class="icon" title="עדכון מלאי"
+                data-edit
+                data-item="{{ s.item.id }}"
+                data-name="{{ s.item.name }}"
+                data-sku="{{ s.item.sku }}"
+                data-standard="{{ s.item.standard_qty }}"
+                data-remaining="{{ s.remaining }}">✎</button>
+        <form method="post" action="/items/{{ s.item.id }}/reset" class="inline"
+              data-confirm="איפוס לתקן — {{ s.item.sku }} · {{ s.item.name }}&#10;&#10;נשאר: {{ s.remaining }} → {{ s.item.standard_qty }}&#10;חסר: {{ s.shortage }} → 0&#10;&#10;תירשם תנועה של {{ signed(s.item.standard_qty - s.remaining) }}.">
+          <button class="icon" title="איפוס לתקן"
+                  {% if s.remaining == s.item.standard_qty %}disabled{% endif %}>⟲</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<dialog id="edit-dialog">
+  <form method="post" id="edit-form">
+    <h2>עדכון מלאי — <span id="ed-title"></span></h2>
+    <p class="hint">תקן: <b id="ed-standard"></b> · נשאר לפי המערכת: <b id="ed-remaining"></b></p>
+    <label for="ed-qty">כמה יש בפועל בארון?</label>
+    <input type="number" id="ed-qty" name="actual_qty" required min="0" step="1">
+    <label for="ed-reason">סיבה</label>
+    <input type="text" id="ed-reason" name="reason" value="ספירת מלאי" maxlength="200">
+    <p class="preview" id="ed-preview"></p>
+    <menu>
+      <button type="button" class="btn ghost" id="ed-cancel">ביטול</button>
+      <button type="submit" class="btn">שמירה</button>
+    </menu>
+  </form>
+</dialog>
+{% endblock %}

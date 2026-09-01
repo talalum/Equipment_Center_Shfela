@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}ניהול פריטים — מרכז ציוד שפלה{% endblock %}
+
+{% block content %}
+<h1>ניהול פריטים</h1>
+
+<section class="panels">
+  <form class="card pad" method="post" action="/items/import" enctype="multipart/form-data">
+    <h2>ייבוא קובץ תקן</h2>
+    <p class="hint">
+      נקראות שלוש עמודות בלבד: <code>מק"ט</code>, <code>שם פריט</code>, <code>תקן</code>.
+      העמודות <code>מלאי עדכני</code>, <code>כמות חוסר</code>, <code>כמות להזמנה</code>
+      ו-<code>הסבר</code> מתעלמות במכוון.
+      ייבוא חוזר מעדכן לפי מק"ט ולא מוחק היסטוריה.
+    </p>
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button class="btn">ייבא</button>
+    {% if last_import %}
+      <p class="hint">
+        ייבוא אחרון: {{ last_import.created_at | local_dt }} —
+        נוספו {{ last_import.created_count }}, עודכנו {{ last_import.updated_count }}{% if last_import.rejected_count %},
+        נדחו {{ last_import.rejected_count }}{% endif %}.
+      </p>
+      {% if last_import.report %}
+        <details><summary>פירוט הדחיות</summary><pre>{{ last_import.report }}</pre></details>
+      {% endif %}
+    {% endif %}
+  </form>
+
+  <form class="card pad" method="post" action="/items/new">
+    <h2>הוספת פריט</h2>
+    <label for="new-sku">מק"ט</label>
+    <input id="new-sku" type="text" name="sku" required>
+    <label for="new-name">שם פריט</label>
+    <input id="new-name" type="text" name="name" required>
+    <label for="new-std">תקן</label>
+    <input id="new-std" type="number" name="standard_qty" value="0" min="0" required>
+    <button class="btn">הוסף</button>
+  </form>
+</section>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th class="num-col">מק"ט</th>
+      <th>שם פריט</th>
+      <th class="num-col">תקן</th>
+      <th>פעיל</th>
+      <th class="act-col"></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for item in items %}
+    {# הטופס עצמו יושב מחוץ לטבלה: <form> בתוך <tr> אינו HTML תקין.
+       הקישור נעשה דרך תכונת form= על כל שדה. #}
+    <tr class="{% if not item.active %}muted-row{% endif %}">
+      <td class="num-col" data-label='מק"ט'>{{ item.sku }}</td>
+      <td data-label="שם פריט">
+        <input form="f-{{ item.id }}" type="text" name="name" value="{{ item.name }}" required
+               aria-label="שם הפריט {{ item.sku }}">
+      </td>
+      <td class="num-col" data-label="תקן">
+        <input form="f-{{ item.id }}" type="number" name="standard_qty" value="{{ item.standard_qty }}"
+               min="0" required style="width:6rem" aria-label="תקן לפריט {{ item.sku }}">
+      </td>
+      <td data-label="פעיל">
+        <input form="f-{{ item.id }}" type="checkbox" name="active" value="1"
+               {% if item.active %}checked{% endif %} aria-label="הפריט {{ item.sku }} פעיל">
+      </td>
+      <td class="act-col">
+        <button form="f-{{ item.id }}" class="btn ghost small">שמור</button>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div hidden>
+  {% for item in items %}
+    <form id="f-{{ item.id }}" method="post" action="/items/{{ item.id }}/update"></form>
+  {% endfor %}
+</div>
+{% endblock %}

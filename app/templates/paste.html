@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}הדבקת מייל — מרכז ציוד שפלה{% endblock %}
+
+{% block content %}
+<h1>הדבקת מייל הנפקה</h1>
+<p class="hint">
+  להעתיק את גוף המייל במלואו ולהדביק כאן. שימושי להזנת מיילים ישנים מלפני שהמערכת עלתה,
+  או למייל בודד שלא נקלט. הדבקה של אותו מייל פעמיים לא תספור אותו פעמיים.
+</p>
+
+<form class="card pad" method="post" action="/paste">
+  <label for="raw">גוף המייל</label>
+  <textarea id="raw" name="raw_text" rows="18" required
+            placeholder="שלום …&#10;&#10;המוצרים שהונפקו:&#10;&#10;תחבושת אישית, מקט: 1111 - כמות: 2&#10;…&#10;&#10;שם המנפיק: …&#10;מרכז ציוד: מרכז ציוד שפלה"></textarea>
+  <button class="btn">קלוט</button>
+</form>
+{% endblock %}

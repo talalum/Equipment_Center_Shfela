@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}יומן הנפקות — מרכז ציוד שפלה{% endblock %}
+
+{% block content %}
+<h1>יומן הנפקות</h1>
+
+{% if not issuances %}
+  <p class="empty">עדיין לא נקלטו הנפקות.</p>
+{% else %}
+  {% for iss in issuances %}
+  <details class="card" {% if loop.first %}open{% endif %}>
+    <summary>
+      <span>{{ iss.email_date | local_dt }}</span>
+      {% if iss.recipient %}<span>· {{ iss.recipient }}</span>{% endif %}
+      {% if iss.issuer %}<span>· מנפיק: {{ iss.issuer }}</span>{% endif %}
+      <span class="count">{{ iss.lines|length }} פריטים</span>
+      {% if iss.status == 'ignored' %}<span class="tag muted">לא נספר</span>{% endif %}
+      {% if iss.source == 'paste' %}<span class="tag">הודבק ידנית</span>{% endif %}
+    </summary>
+
+    {% if iss.review_note %}<p class="note">{{ iss.review_note }}</p>{% endif %}
+
+    <table class="lines">
+      <tbody>
+      {% for line in iss.lines %}
+        <tr>
+          <td class="num-col">{{ line.raw_sku }}</td>
+          <td>
+            {{ line.item_name if line.matched else line.raw_name }}
+            {% if line.name_differs %}
+              <span class="raw">← במייל: "{{ line.raw_name }}"</span>
+            {% endif %}
+          </td>
+          <td class="num-col">{{ line.qty }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <details>
+      <summary>הצג את המייל המקורי</summary>
+      <pre>{{ iss.raw_text }}</pre>
+    </details>
+  </details>
+  {% endfor %}
+{% endif %}
+{% endblock %}

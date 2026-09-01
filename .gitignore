@@ -1,0 +1,14 @@
+# סודות — לעולם לא ב-git
+.env
+
+# מסד הנתונים המקומי
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.DS_Store

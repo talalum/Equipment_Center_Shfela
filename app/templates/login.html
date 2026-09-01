@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>כניסה — מרכז ציוד שפלה</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="centered">
+  <form class="card pad login" method="post" action="/login">
+    <h1>מרכז ציוד שפלה</h1>
+    {% if error %}<p class="banner error">{{ error }}</p>{% endif %}
+    <label for="pw">סיסמה</label>
+    <input id="pw" type="password" name="password" required autofocus autocomplete="current-password">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn">כניסה</button>
+  </form>
+</body>
+</html>
