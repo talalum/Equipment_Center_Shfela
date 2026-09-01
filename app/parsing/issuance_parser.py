@@ -36,6 +36,9 @@ class ParsedIssuance:
     center: str | None = None
     lines: list[ParsedLine] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: האם נמצאה בכלל כותרת רשימת הפריטים. מבדיל בין "מייל הנפקה שנכשל
+    #: בפירוק" (דורש טיפול) לבין "מייל שאינו הנפקה" (אפשר להתעלם).
+    has_items_section: bool = False
 
     @property
     def ok(self) -> bool:
@@ -68,6 +71,20 @@ def load_format(path: str | None = None) -> EmailFormat:
     )
 
 
+# כשג'ימייל מציג מייל HTML כטקסט, הוא עוטף מודגשים בכוכביות:
+#   *המוצרים שהונפקו*:      *מרכז ציוד: *מרכז ציוד שפלה
+# אסור להסיר את הכוכבית מתוך שמות פריטים כמו "פד גזה סטרילי 10*10",
+# ולכן מוסרות רק כוכביות שאינן בין שתי ספרות.
+_EMPHASIS_RE = re.compile(r"(?<!\d)\*|\*(?!\d)")
+
+# תחילית ציטוט בהעברת מייל (נפוץ ב-Outlook): "> שורה מקורית".
+_QUOTE_RE = re.compile(r"^\s*(?:>\s?)+")
+
+
+def _clean_line(line: str) -> str:
+    return _EMPHASIS_RE.sub("", _QUOTE_RE.sub("", line.rstrip()))
+
+
 def _find_anchor(lines: list[str], anchor: str, start: int = 0) -> int:
     for idx in range(start, len(lines)):
         if anchor in lines[idx]:
@@ -92,7 +109,8 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
         result.errors.append("גוף המייל ריק.")
         return result
 
-    lines = [line.rstrip() for line in raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    normalised = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [_clean_line(line) for line in normalised.split("\n")]
 
     result.issuer = _first_match(lines, fmt.issuer, "issuer")
     result.center = _first_match(lines, fmt.center, "center")
@@ -102,6 +120,7 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
     if start == -1:
         result.errors.append(f'לא נמצא העוגן "{fmt.items_start}" — ייתכן שתבנית המייל השתנתה.')
         return result
+    result.has_items_section = True
 
     end = _find_anchor(lines, fmt.items_end, start + 1)
     if end == -1:

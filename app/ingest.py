@@ -68,13 +68,22 @@ def ingest_issuance(
             notes.append(f'מק"ט {line.raw_sku} ("{line.raw_name}") לא קיים במערכת.')
         lines.append((line.raw_sku, line.raw_name, line.qty, item.id if item else None))
 
-    if not issuance_parser.center_matches(parsed, fmt):
+    # סדר ההחלטה חשוב. בעבר בדיקת המרכז רצה ראשונה, ולכן מייל שלא נפרס כלל
+    # קיבל "מרכז לא ידוע" וסומן ignored — כלומר נעלם בשקט עם הודעה מטעה.
+    # עכשיו: רק מייל שברור שאינו הנפקה, או הנפקה של מרכז אחר *שזוהה בוודאות*,
+    # מסומן ignored. כל השאר מגיע לביקורת.
+    if not parsed.has_items_section:
         status = IGNORED
-        note = (
-            f'ההנפקה שייכת ל"{parsed.center or "מרכז לא ידוע"}" '
-            f'ולא ל"{fmt.expected_center}" — לא נכנסה למלאי.'
-        )
+        note = "המייל אינו נראה כמו הודעת הנפקה — לא נמצאה בו רשימת מוצרים."
+        message = "המייל אינו הודעת הנפקה ולכן לא נקלט."
+    elif parsed.center and not issuance_parser.center_matches(parsed, fmt):
+        status = IGNORED
+        note = f'ההנפקה שייכת ל"{parsed.center}" ולא ל"{fmt.expected_center}" — לא נכנסה למלאי.'
         message = "המייל שייך למרכז ציוד אחר ולכן לא נקלט למלאי."
+    elif not parsed.center:
+        status = NEEDS_REVIEW
+        note = "\n".join([*notes, 'לא זוהתה שורת "מרכז ציוד" במייל — נדרש אישור ידני.'])
+        message = "לא זוהה מרכז הציוד במייל — ממתין לאישור."
     elif notes:
         status = NEEDS_REVIEW
         note = "\n".join(notes)
