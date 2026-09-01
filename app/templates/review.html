@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}ממתין לאישור — מרכז ציוד שפלה{% endblock %}
+
+{% block content %}
+<h1>ממתין לאישור</h1>
+
+{% if not issuances %}
+  <p class="empty">✓ אין הנפקות שממתינות לטיפול.</p>
+{% else %}
+  <p class="banner warn">
+    {% if issuances|length == 1 %}
+      ⚠ הנפקה אחת ממתינה — <strong>היא לא נכנסה למלאי.</strong>
+    {% else %}
+      ⚠ {{ issuances|length }} הנפקות ממתינות — <strong>אף אחת מהן לא נכנסה למלאי.</strong>
+    {% endif %}
+    הנפקה נקלטת רק כשכל השורות שלה משויכות לפריט.
+  </p>
+
+  {% for iss in issuances %}
+  <article class="card">
+    <header>
+      <span>{{ iss.email_date | local_dt }}</span>
+      {% if iss.recipient %}<span>· {{ iss.recipient }}</span>{% endif %}
+      {% if iss.issuer %}<span>· מנפיק: {{ iss.issuer }}</span>{% endif %}
+      <span class="tag">{{ 'הודבק ידנית' if iss.source == 'paste' else 'מייל' }}</span>
+    </header>
+
+    {% if iss.review_note %}
+      <p class="note">{{ iss.review_note }}</p>
+    {% endif %}
+
+    {% if iss.lines %}
+    <table class="lines">
+      <tbody>
+      {% for line in iss.lines %}
+        <tr>
+          <td class="mark">{{ "✓" if line.matched else "✗" }}</td>
+          <td class="num-col">{{ line.raw_sku }}</td>
+          <td>
+            {% if line.matched %}
+              {{ line.item_name }}
+              {% if line.name_differs %}
+                <span class="raw">← במייל: "{{ line.raw_name }}"</span>
+              {% endif %}
+            {% else %}
+              "{{ line.raw_name }}" <span class="raw">← מק"ט לא קיים במערכת</span>
+            {% endif %}
+          </td>
+          <td class="num-col">{{ line.qty }}</td>
+          <td class="fix">
+            {% if not line.matched %}
+              <form method="post" action="/review/{{ iss.id }}/assign/{{ line.id }}" class="inline">
+                <select name="item_id" required aria-label="שייך לפריט קיים">
+                  <option value="">שייך לפריט קיים…</option>
+                  {% for it in items %}
+                    <option value="{{ it.id }}">{{ it.sku }} · {{ it.name }}</option>
+                  {% endfor %}
+                </select>
+                <button class="btn ghost small">שייך</button>
+              </form>
+              <form method="post" action="/review/{{ iss.id }}/create-item/{{ line.id }}" class="inline"
+                    data-confirm='ליצור פריט חדש "{{ line.raw_name }}" עם מק"ט {{ line.raw_sku }}?'>
+                <input type="number" name="standard_qty" value="0" min="0" style="width:5rem"
+                       aria-label="תקן לפריט החדש" title="תקן לפריט החדש">
+                <button class="btn ghost small">צור פריט חדש</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="note">לא זוהו שורות פריטים במייל הזה.</p>
+    {% endif %}
+
+    <details>
+      <summary>הצג את המייל המקורי</summary>
+      <pre>{{ iss.raw_text }}</pre>
+    </details>
+
+    <footer>
+      <form method="post" action="/review/{{ iss.id }}/ignore" class="inline"
+            data-confirm="לסמן את ההנפקה כלא רלוונטית? היא לא תיספר במלאי.">
+        <button class="btn ghost">התעלם מההנפקה</button>
+      </form>
+      <form method="post" action="/review/{{ iss.id }}/approve" class="inline">
+        <button class="btn">אשר וקלוט למלאי</button>
+      </form>
+    </footer>
+  </article>
+  {% endfor %}
+{% endif %}
+{% endblock %}

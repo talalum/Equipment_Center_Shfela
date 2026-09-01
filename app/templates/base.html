@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}מרכז ציוד שפלה{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>📦</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">מרכז ציוד שפלה</a>
+  <nav>
+    <a href="/" {% if path == '/' %}class="on"{% endif %}>לוח מצב</a>
+    <a href="/review" {% if path == '/review' %}class="on"{% endif %}>ממתין לאישור</a>
+    <a href="/issuances" {% if path == '/issuances' %}class="on"{% endif %}>הנפקות</a>
+    <a href="/movements" {% if path == '/movements' %}class="on"{% endif %}>תנועות</a>
+    <a href="/items" {% if path == '/items' %}class="on"{% endif %}>פריטים</a>
+    <a href="/paste" {% if path == '/paste' %}class="on"{% endif %}>הדבקת מייל</a>
+  </nav>
+  {% if auth_configured %}<a class="logout" href="/logout">יציאה</a>{% endif %}
+</header>
+
+<main>
+  {% if not auth_configured %}
+    <p class="banner warn">
+      <strong>אין סיסמת כניסה מוגדרת.</strong>
+      האתר פתוח לכל מי שמגיע לכתובת. לפני העלאה לענן יש להגדיר
+      <code>APP_PASSWORD_HASH</code> (ראי README).
+    </p>
+  {% endif %}
+
+  {% if flash %}
+    <p class="banner {{ flash.level }}">{{ flash.message }}</p>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>
