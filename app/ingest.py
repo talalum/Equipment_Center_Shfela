@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from app import inventory, repo
 from app.parsing import issuance_parser
+from app.parsing.normalize import clean_text
 
 APPLIED = "applied"
 NEEDS_REVIEW = "needs_review"
@@ -29,6 +30,33 @@ class IngestResult:
     status: str
     duplicate: bool = False
     message: str = ""
+
+
+def content_fingerprint(parsed: issuance_parser.ParsedIssuance) -> str:
+    """
+    טביעת אצבע של *תוכן* ההנפקה: מקבל, מנפיק, מרכז, ורשימת מק"טים וכמויות.
+
+    נחוצה כי Message-ID אינו מזהה את ההנפקה אלא את המייל: כל העברה חוזרת
+    של אותה הנפקה מקבלת מזהה חדש, ולכן הייתה נספרת שוב. התאריך *לא* נכלל
+    בכוונה — העברה מגיעה בתאריך אחר מהמקור, והכללתו הייתה מחטיאה בדיוק
+    את המקרה שאנחנו מנסים לתפוס.
+    """
+    items = "|".join(sorted(f"{line.normalized_sku}:{line.qty}" for line in parsed.lines))
+    parts = [
+        clean_text(parsed.recipient or ""),
+        clean_text(parsed.issuer or ""),
+        clean_text(parsed.center or ""),
+        items,
+    ]
+    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def _duplicate_note(existing) -> str:
+    when = existing.email_date.strftime("%d/%m/%Y %H:%M") if existing.email_date else "תאריך לא ידוע"
+    return (
+        f"נראה כמו אותה הנפקה שכבר נקלטה ({when}) — ייתכן שהמייל הועבר שוב.\n"
+        "אם זו באמת הנפקה נוספת ונפרדת — לאשר. אם זו העברה חוזרת — להתעלם."
+    )
 
 
 def synthetic_message_id(raw_text: str) -> str:
@@ -107,6 +135,15 @@ def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
     parsed = issuance_parser.parse(issuance.raw_text, fmt)
     status, note, message, lines = _classify(parsed, fmt)
 
+    content_key = content_fingerprint(parsed) if parsed.lines else None
+    if status == APPLIED:
+        twin = repo.find_applied_with_content(content_key, exclude_id=issuance_id)
+        if twin is not None:
+            status = NEEDS_REVIEW
+            note = _duplicate_note(twin)
+            message = "נראה כהעברה חוזרת של הנפקה שכבר נקלטה — ממתין להכרעה."
+
+    repo.set_issuance_content_key(issuance_id, content_key)
     repo.replace_issuance_lines(issuance_id, lines)
     repo.update_issuance_details(
         issuance_id,
@@ -158,6 +195,17 @@ def ingest_issuance(
 
     status, note, message, lines = _classify(parsed, fmt)
 
+    # הנפקה שנראית זהה לאחת שכבר נקלטה לא נקלטת לבד ולא נזרקת לבד —
+    # היא עוברת להכרעה ידנית, כי אי אפשר לדעת מהמייל אם זו העברה חוזרת
+    # או באמת הנפקה שנייה של אותו ציוד לאותו אדם.
+    content_key = content_fingerprint(parsed) if parsed.lines else None
+    if status == APPLIED:
+        twin = repo.find_applied_with_content(content_key)
+        if twin is not None:
+            status = NEEDS_REVIEW
+            note = _duplicate_note(twin)
+            message = "המייל נראה כהעברה חוזרת של הנפקה שכבר נקלטה — ממתין להכרעה."
+
     stamp = (email_date or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     issuance_id = repo.insert_issuance(
         message_id=message_id,
@@ -170,6 +218,7 @@ def ingest_issuance(
         source=source,
         review_note=note,
         lines=lines,
+        content_key=content_key,
     )
     return IngestResult(issuance_id=issuance_id, status=status, message=message)
 

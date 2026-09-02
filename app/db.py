@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS issuances (
     status      TEXT    NOT NULL CHECK (status IN ('applied', 'needs_review', 'ignored')),
     source      TEXT    NOT NULL CHECK (source IN ('email', 'paste')),
     review_note TEXT,
+    -- טביעת אצבע של תוכן ההנפקה (מקבל, מנפיק, פריטים וכמויות).
+    -- מזהה העברה חוזרת של אותה הנפקה, שמקבלת Message-ID חדש בכל פעם.
+    content_key TEXT,
     created_at  TEXT    NOT NULL
 );
 
@@ -70,10 +73,17 @@ CREATE TABLE IF NOT EXISTS import_runs (
     created_at     TEXT    NOT NULL
 );
 
+"""
+
+# האינדקסים נוצרים *אחרי* המיגרציה, ולא כחלק מ-SCHEMA: על מסד קיים
+# הטבלה כבר קיימת ולכן CREATE TABLE מדולג, אבל אינדקס על עמודה חדשה
+# היה מפיל את כל הסקריפט לפני שהמיגרציה הוסיפה אותה.
+INDEXES = """
 CREATE INDEX IF NOT EXISTS ix_lines_issuance ON issuance_lines(issuance_id);
 CREATE INDEX IF NOT EXISTS ix_lines_item     ON issuance_lines(item_id);
 CREATE INDEX IF NOT EXISTS ix_adj_item       ON adjustments(item_id);
 CREATE INDEX IF NOT EXISTS ix_iss_status     ON issuances(status);
+CREATE INDEX IF NOT EXISTS ix_iss_content    ON issuances(content_key);
 """
 
 _local = threading.local()
@@ -126,9 +136,22 @@ def transaction() -> Iterator[sqlite3.Connection]:
     conn.execute("COMMIT")
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """
+    שינויי סכימה על מסד קיים. חייב להיות בטוח להרצה חוזרת, כי הוא רץ
+    בכל עלייה — והמסד של המשתמשת נוצר לפני שהעמודות האלה היו קיימות.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(issuances)")}
+    if "content_key" not in columns:
+        conn.execute("ALTER TABLE issuances ADD COLUMN content_key TEXT")
+
+
 def init_db() -> None:
+    """סדר קריטי: טבלאות → מיגרציה → אינדקסים."""
     conn = connect()
     conn.executescript(SCHEMA)
+    _migrate(conn)
+    conn.executescript(INDEXES)
 
 
 def reset_for_tests() -> None:

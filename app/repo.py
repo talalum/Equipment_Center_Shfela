@@ -198,6 +198,7 @@ def insert_issuance(
     source: str,
     review_note: str | None,
     lines: list[tuple[str, str, int, int | None]],
+    content_key: str | None = None,
 ) -> int:
     """
     כותב הנפקה ואת שורותיה בטרנזקציה אחת — או שהכול נכנס, או שכלום לא.
@@ -209,12 +210,12 @@ def insert_issuance(
             """
             INSERT INTO issuances
                 (message_id, email_date, recipient, issuer, center, raw_text,
-                 status, source, review_note, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, source, review_note, content_key, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, email_date, recipient, issuer, center, raw_text,
-                status, source, review_note, utcnow(),
+                status, source, review_note, content_key, utcnow(),
             ),
         )
         issuance_id = int(cur.lastrowid)
@@ -223,6 +224,23 @@ def insert_issuance(
             [(issuance_id, sku, name, qty, item_id) for sku, name, qty, item_id in lines],
         )
     return issuance_id
+
+
+def find_applied_with_content(content_key: str, exclude_id: int | None = None) -> Issuance | None:
+    """מחפש הנפקה שכבר נקלטה ותוכנה זהה — לזיהוי העברה חוזרת."""
+    if not content_key:
+        return None
+    sql = "SELECT * FROM issuances WHERE content_key = ? AND status = 'applied'"
+    params: list = [content_key]
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    row = connect().execute(sql + " ORDER BY id LIMIT 1", params).fetchone()
+    return _issuance_from_row(row) if row else None
+
+
+def set_issuance_content_key(issuance_id: int, content_key: str | None) -> None:
+    connect().execute("UPDATE issuances SET content_key = ? WHERE id = ?", (content_key, issuance_id))
 
 
 def replace_issuance_lines(issuance_id: int, lines: list[tuple[str, str, int, int | None]]) -> None:
