@@ -1,4 +1,4 @@
-"""מסכי האתר — מרכז ציוד שפלה."""
+"""The site screens — Equipment Center Shfela."""
 from __future__ import annotations
 
 import logging
@@ -19,19 +19,20 @@ log = logging.getLogger(__name__)
 
 def _local_timezone(name: str):
     """
-    אזור הזמן לתצוגה.
+    The timezone used for display.
 
-    בווינדוס אין מסד אזורי זמן במערכת ההפעלה, ולכן ZoneInfo נכשל שם אלא אם
-    מותקנת חבילת tzdata. במקרה כזה נופלים לשעון של המחשב עצמו — עדיף להציג
-    שעה נכונה מהמערכת מאשר להפיל את השרת בגלל תצוגת תאריך.
+    Windows has no timezone database in the operating system, so ZoneInfo fails
+    there unless the tzdata package is installed. In that case we fall back to
+    the machine's own clock — better to show a correct time from the system than
+    to bring the server down over a date display.
     """
     try:
         return ZoneInfo(name)
     except Exception:
         fallback = datetime.now().astimezone().tzinfo
         log.warning(
-            'לא נמצא אזור הזמן "%s" (נפוץ בווינדוס בלי חבילת tzdata) — '
-            "מוצג שעון המחשב במקום. להתקנה: pip install tzdata",
+            'Timezone "%s" not found (common on Windows without the tzdata package) — '
+            "showing the machine clock instead. To install: pip install tzdata",
             name,
         )
         return fallback
@@ -84,7 +85,8 @@ def back(request: Request, fallback: str = "/") -> Response:
 
 
 def authenticated(request: Request) -> bool:
-    # אם לא הוגדרה סיסמה (פיתוח מקומי) אין חסימה, אבל אזהרה מוצגת בכל מסך.
+    # With no password configured (local development) nothing is blocked, but a
+    # warning is shown on every screen.
     return not auth.auth_configured() or bool(request.session.get("user"))
 
 
@@ -455,7 +457,7 @@ def healthz(_: Request) -> Response:
 
 @router.get("/static/{name}")
 def static_file(_: Request, name: str) -> Response:
-    # שם קובץ בלבד — הנתיב לא יכול לצאת מהתיקייה.
+    # Filename only — the path cannot escape the directory.
     candidate = (STATIC_DIR / Path(name).name).resolve()
     if not candidate.is_file() or STATIC_DIR.resolve() not in candidate.parents:
         return Response.html("<h1>404</h1>", status=404)
@@ -471,17 +473,18 @@ def static_file(_: Request, name: str) -> Response:
 
 
 def bootstrap() -> None:
-    """הכנת המערכת לעלייה: סכימה, טעינה ראשונית ותזמון."""
+    """Preparing the system for start-up: schema, initial load, and scheduling."""
     init_db()
     if not repo.list_items():
         csv_path = config.DEFAULT_IMPORT_CSV
         if csv_path.exists():
             result = importer.import_items(csv_path.read_bytes(), csv_path.name)
-            log.info("ייבוא ראשוני מקובץ התקן: %s", result.summary())
+            log.info("Initial import from the standard-quantity file: %s", result.summary())
     scheduler.start()
 
 
-# החיבור למסד נסגר בסוף כל בקשה. ב-SQLite זה זול, וב-Postgres זה הכרחי:
-# השרת פותח thread לכל בקשה, ולכל thread חיבור משלו — בלי שחרור מסודר
-# מכסת החיבורים של הספק נגמרת.
+# The database connection is closed at the end of every request. On SQLite that
+# is cheap; on Postgres it is essential: the server opens a thread per request
+# and each thread has its own connection — without an orderly release, the
+# provider's connection quota runs out.
 application = make_wsgi_app(router, after_request=db.close_thread_connection)

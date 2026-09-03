@@ -1,10 +1,12 @@
 """
-פלט טקסט בעברית לטרמינל.
+Terminal text output.
 
-כל הודעות המערכת בעברית. בווינדוס, כשהפלט מנותב לקובץ או ל-pipe, פייתון
-בוחר את הקידוד המקומי (cp1252/cp1255) ושורה בעברית מפילה את התהליך כולו
-ב-UnicodeEncodeError. כאן מכריחים UTF-8, ולכן כל כלי שמדפיס עברית צריך
-לקרוא ל-force_utf8_output() בתחילת הריצה.
+The system handles Hebrew data — item names, email subjects, recipients —
+and prints it from the CLI tools. On Windows, when output is redirected to a
+file or a pipe, Python picks the local code page (cp1252/cp1255) and a single
+Hebrew line kills the whole process with UnicodeEncodeError. This forces
+UTF-8, so every tool that may print Hebrew data must call force_utf8_output()
+at the start of its run.
 """
 from __future__ import annotations
 
@@ -16,4 +18,4 @@ def force_utf8_output() -> None:
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, OSError, ValueError):
-            pass  # לא כל stream תומך — לא סיבה להיכשל
+            pass  # not every stream supports it — not a reason to fail

@@ -1,8 +1,9 @@
 """
-שכבת ווב מינימלית מעל WSGI (ספרייה סטנדרטית בלבד).
+A minimal web layer on top of WSGI (standard library only).
 
-מספקת בדיוק את מה שהאתר צריך: ניתוב, פענוח טפסים כולל העלאת קובץ,
-ועוגיית session חתומה. אין כאן framework כללי — רק מה שנדרש.
+Provides exactly what the site needs: routing, form parsing including file
+upload, and a signed session cookie. This is not a general framework — only
+what is actually required.
 """
 from __future__ import annotations
 
@@ -47,7 +48,7 @@ class Request:
     headers: dict[str, str]
     remote_addr: str
     session: dict[str, Any] = field(default_factory=dict)
-    #: נקבע ל-True כשמשנים את ה-session ויש לשלוח עוגייה חדשה.
+    #: Set to True when the session changes and a new cookie must be sent.
     session_dirty: bool = False
 
     def get(self, name: str, default: str = "") -> str:
@@ -122,7 +123,7 @@ def _unsign(token: str) -> dict[str, Any]:
         data = json.loads(payload)
         return data if isinstance(data, dict) else {}
     except Exception:
-        # עוגייה פגומה או מזויפת — מתייחסים אליה כאילו אין session.
+        # A corrupt or forged cookie — treated as if there were no session at all.
         return {}
 
 
@@ -147,8 +148,8 @@ def _session_cookie_header(session: dict[str, Any]) -> tuple[str, str]:
 
 def _parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, UploadedFile]]:
     """
-    פענוח multipart/form-data דרך מודול email — יציב יותר מפירוק ידני
-    של ה-boundary, ומטפל נכון בקידודים.
+    Parsing of multipart/form-data through the email module — more robust than
+    splitting the boundary by hand, and it handles encodings correctly.
     """
     header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
     message = BytesParser(policy=HTTP).parsebytes(header + body)
@@ -216,7 +217,7 @@ Handler = Callable[[Request], Response]
 
 
 class Router:
-    """ניתוב פשוט עם פרמטרים מספריים בנתיב, למשל /items/{id}/reset."""
+    """Simple routing with numeric path parameters, for instance /items/{id}/reset."""
 
     def __init__(self) -> None:
         self._routes: list[tuple[str, re.Pattern[str], Handler]] = []
@@ -258,8 +259,8 @@ def make_wsgi_app(
     after_request: Callable[[], None] | None = None,
 ):
     """
-    `after_request` רץ תמיד בסוף הטיפול, גם כשהבקשה נכשלה. משמש לשחרור
-    משאבים שנצברו ל-thread — ראו main.py.
+    `after_request` always runs at the end of handling, including when the request
+    failed. Used to release resources accumulated per thread — see main.py.
     """
 
     def application(environ, start_response):
@@ -272,7 +273,7 @@ def make_wsgi_app(
             import logging
             import traceback
 
-            logging.getLogger(__name__).error("שגיאה בטיפול בבקשה:\n%s", traceback.format_exc())
+            logging.getLogger(__name__).error("Error while handling request:\n%s", traceback.format_exc())
             response = Response.html("<h1>500 — שגיאה בשרת</h1>", status=500)
         finally:
             if after_request:
@@ -293,8 +294,8 @@ def make_wsgi_app(
 
 def safe_redirect_target(candidate: str, fallback: str = "/") -> str:
     """
-    מונע הפניה לאתר חיצוני דרך פרמטר next או כותרת Referer.
-    מתקבלים רק נתיבים פנימיים.
+    Prevents a redirect to an external site through the next parameter or the
+    Referer header. Only internal paths are accepted.
     """
     if not candidate:
         return fallback

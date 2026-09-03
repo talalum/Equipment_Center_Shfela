@@ -1,4 +1,4 @@
-"""כלי בדיקת החיבור לתיבה."""
+"""The mailbox connection check tool."""
 from __future__ import annotations
 
 import imaplib
@@ -52,24 +52,24 @@ class CheckMail(unittest.TestCase):
         with redirect_stdout(buffer):
             code = checkmail.main()
         self.assertEqual(code, 1)
-        self.assertIn("לא הוגדרו פרטי תיבה", buffer.getvalue())
+        self.assertIn("No mailbox details are configured", buffer.getvalue())
 
     def test_never_prints_the_password(self) -> None:
         config.IMAP_PASSWORD = "supersecret12345"
         _, output = self._run(FakeIMAP([]))
         self.assertNotIn("supersecret12345", output)
-        self.assertIn("16 תווים", output)
+        self.assertIn("16 characters", output)
 
     def test_warns_when_password_is_not_16_characters(self) -> None:
         config.IMAP_PASSWORD = "short"
         _, output = self._run(FakeIMAP([]))
-        self.assertIn("בן 16 תווים", output)
+        self.assertIn("is 16 characters long", output)
 
     def test_empty_mailbox_is_a_success(self) -> None:
         code, output = self._run(FakeIMAP([]))
         self.assertEqual(code, 0)
-        self.assertIn("החיבור הצליח", output)
-        self.assertIn("אין מיילים", output)
+        self.assertIn("Connection succeeded", output)
+        self.assertIn("No emails", output)
 
     def test_classifies_each_kind_of_message(self) -> None:
         code, output = self._run(
@@ -82,13 +82,14 @@ class CheckMail(unittest.TestCase):
             )
         )
         self.assertEqual(code, 0)
-        self.assertIn("7 פריטים", output)
-        self.assertIn("מרכז אחר", output)
+        self.assertIn("7 items", output)
+        self.assertIn("another center", output)
+        # The parse error itself is a review note, and those stay in Hebrew.
         self.assertIn("לא נמצא העוגן", output)
-        self.assertIn("מתוכם 1", output)
+        self.assertIn("1 of them", output)
 
     def test_does_not_mark_anything_as_read(self) -> None:
-        """בדיקה חייבת להיות חסרת תופעות לוואי — אחרת היא 'תבלע' מיילים."""
+        """The check must be free of side effects — otherwise it would 'swallow' emails."""
         fake = FakeIMAP([_message("הנפקה", SAMPLE_EMAIL, "<a@x>")])
         self._run(fake)
         self.assertEqual(fake.marked_seen, [])
@@ -97,13 +98,13 @@ class CheckMail(unittest.TestCase):
         error = imaplib.IMAP4.error("b'[AUTHENTICATIONFAILED] Invalid credentials (Failure)'")
         code, output = self._run(error)
         self.assertEqual(code, 1)
-        self.assertIn("האימות נדחה", output)
+        self.assertIn("Authentication was rejected", output)
         self.assertIn("App Password", output)
 
     def test_dns_failure_is_explained(self) -> None:
         code, output = self._run(socket.gaierror("Name or service not known"))
         self.assertEqual(code, 1)
-        self.assertIn("אין חיבור לאינטרנט", output)
+        self.assertIn("no internet connection", output)
 
     def test_timeout_mentions_the_firewall(self) -> None:
         code, output = self._run(TimeoutError("timed out"))
@@ -111,9 +112,9 @@ class CheckMail(unittest.TestCase):
         self.assertIn("993", output)
 
     def test_unexpected_error_does_not_crash(self) -> None:
-        code, output = self._run(RuntimeError("משהו מוזר"))
+        code, output = self._run(RuntimeError("something strange"))
         self.assertEqual(code, 1)
-        self.assertIn("נכשל", output)
+        self.assertIn("Connection failed", output)
 
 
 if __name__ == "__main__":

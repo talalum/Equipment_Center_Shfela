@@ -1,13 +1,14 @@
 """
-אתחול חבילת הטסטים.
+Test package initialization.
 
-חייב לרוץ לפני שנטען app.config — ולכן הוא כאן ולא ב-base.py. בלי זה קובץ
-.env אמיתי שיושב על מחשב המפתחת נטען לתוך הטסטים, והם נכשלים או עוברים
-מסיבות שאינן קשורות לקוד.
+Must run before app.config is imported — which is why it lives here and not in
+base.py. Without it, a real .env file sitting on the developer's machine is
+loaded into the tests, and they then fail or pass for reasons unrelated to the
+code.
 """
 from __future__ import annotations
 
 import os
 
-# נתיב שאינו קובץ — טעינת .env תחזיר מיד dict ריק.
+# A path that is not a file — loading .env returns an empty dict immediately.
 os.environ["ENV_FILE"] = os.devnull

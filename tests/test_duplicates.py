@@ -1,13 +1,15 @@
 """
-זיהוי העברה חוזרת של אותה הנפקה.
+Detecting a re-forward of the same issuance.
 
-Message-ID מזהה *מייל*, לא הנפקה. בזרימת העבודה האמיתית מיילי ההנפקה
-מועברים לתיבה, וכל העברה מקבלת Message-ID חדש — ולכן אותה הנפקה בדיוק
-נספרה פעמיים והמלאי יצא שגוי.
+A Message-ID identifies an *email*, not an issuance. In the real workflow the
+issuance emails are forwarded into the mailbox, and every forward gets a new
+Message-ID — so one and the same issuance was counted twice and the stock came
+out wrong.
 
-הפתרון הוא טביעת אצבע של התוכן, אבל *לא* דחייה אוטומטית: אי אפשר לדעת
-מהמייל אם זו העברה חוזרת או באמת הנפקה שנייה של אותו ציוד לאותו אדם,
-ולכן ההכרעה עוברת למשתמשת.
+The fix is a fingerprint of the content, but *not* automatic rejection: the
+email cannot tell us whether this is a re-forward or genuinely a second
+issuance of the same equipment to the same person, so the decision goes to the
+user.
 """
 from __future__ import annotations
 
@@ -28,7 +30,7 @@ class Fingerprint(unittest.TestCase):
         )
 
     def test_forwarding_wrapper_does_not_change_the_key(self) -> None:
-        """הכותרות של ההעברה אינן חלק מההנפקה ולכן לא אמורות להשפיע."""
+        """The forwarding headers are not part of the issuance and must not affect it."""
         wrapped = "---------- Forwarded message ---------\nFrom: x@y\n\n" + FORWARDED
         self.assertEqual(
             ingest.content_fingerprint(parse(FORWARDED)),
@@ -49,7 +51,7 @@ class Fingerprint(unittest.TestCase):
 
     def test_item_order_does_not_matter(self) -> None:
         lines = SAMPLE_EMAIL.split("\n")
-        swapped = "\n".join(lines)  # אותו תוכן
+        swapped = "\n".join(lines)  # the same content
         self.assertEqual(
             ingest.content_fingerprint(parse(SAMPLE_EMAIL)),
             ingest.content_fingerprint(parse(swapped)),
@@ -72,7 +74,7 @@ class ReforwardedIssuance(DBTestCase):
     def test_second_forward_goes_to_review_not_to_stock(self) -> None:
         second = ingest.ingest_issuance(FORWARDED, "<forward-by-someone-else@mail>")
         self.assertEqual(second.status, ingest.NEEDS_REVIEW)
-        self.assertEqual(self.issued(), 2, "אותה הנפקה לא אמורה להיספר פעמיים")
+        self.assertEqual(self.issued(), 2, "the same issuance must not be counted twice")
 
     def test_the_note_explains_both_options(self) -> None:
         second = ingest.ingest_issuance(FORWARDED, "<again@mail>")
@@ -82,7 +84,7 @@ class ReforwardedIssuance(DBTestCase):
         self.assertIn("להתעלם", note)
 
     def test_it_is_not_dropped_it_is_decidable(self) -> None:
-        """המשתמשת יכולה לאשר — כשזו באמת הנפקה נוספת."""
+        """The user can approve — when it really is an additional issuance."""
         second = ingest.ingest_issuance(FORWARDED, "<again@mail>")
         ok, _ = ingest.approve_issuance(second.issuance_id)
         self.assertTrue(ok)
@@ -116,7 +118,7 @@ class ReanalysisDoesNotFlagItself(DBTestCase):
         self.issuance_id = ingest.ingest_issuance(FORWARDED, "<only-one@mail>").issuance_id
 
     def test_reanalysing_a_lone_issuance_keeps_it_applied(self) -> None:
-        """הנפקה בודדת לא אמורה לסמן את עצמה ככפילות של עצמה."""
+        """A lone issuance must not flag itself as a duplicate of itself."""
         ingest.reanalyse_issuance(self.issuance_id)
         self.assertEqual(repo.get_issuance(self.issuance_id).status, ingest.APPLIED)
         self.assertEqual(inventory.status_for_item(repo.find_item_by_sku("1111")).issued, 2)
@@ -131,8 +133,8 @@ class ReanalysisDoesNotFlagItself(DBTestCase):
 class MigrationOfOlderDatabase(DBTestCase):
     def tearDown(self) -> None:
         """
-        הבדיקה כאן בונה מחדש טבלה. ב-Postgres המסד משותף בין הבדיקות,
-        ולכן מפילים את הסכימה כדי שה-setUp הבא ייצור אותה נקייה.
+        This test rebuilds a table. On Postgres the database is shared between
+        tests, so the schema is dropped for the next setUp to recreate cleanly.
         """
         from app import db
 
@@ -145,15 +147,15 @@ class MigrationOfOlderDatabase(DBTestCase):
 
     def test_content_key_is_added_to_an_existing_table(self) -> None:
         """
-        המסד של המשתמשת נוצר לפני שהעמודה הזו הייתה קיימת. עלייה חייבת
-        להוסיף אותה בלי לאבד נתונים ובלי להיכשל.
+        The user's database was created before this column existed. Start-up must
+        add it without losing data and without failing.
         """
         from app import db
         from app.db import _existing_columns, _migrate, connect, init_db
 
         conn = connect()
-        # הטבלה נבנית כאן בתחביר של המנוע הפעיל, כדי שהבדיקה תתאר מסד ישן
-        # אמיתי בשני המצבים ולא רק ב-SQLite.
+        # The table is built here in the active engine's syntax, so the test
+        # describes a genuinely old database in both modes and not only on SQLite.
         pk = db._PK_POSTGRES if db.is_postgres() else db._PK_SQLITE
         cascade = " CASCADE" if db.is_postgres() else ""
         conn.execute(f"DROP TABLE issuances{cascade}")
@@ -175,11 +177,11 @@ class MigrationOfOlderDatabase(DBTestCase):
         )
         self.assertNotIn("content_key", _existing_columns(conn, "issuances"))
 
-        init_db()  # כולל את המיגרציה
+        init_db()  # includes the migration
         self.assertIn("content_key", _existing_columns(conn, "issuances"))
-        self.assertIsNotNone(repo.find_issuance_by_message_id("<old@mail>"), "הנתונים נשמרו")
+        self.assertIsNotNone(repo.find_issuance_by_message_id("<old@mail>"), "the data was preserved")
 
-        _migrate(conn)  # בטוח להרצה חוזרת
+        _migrate(conn)  # safe to run again
         self.assertIn("content_key", _existing_columns(conn, "issuances"))
 
 

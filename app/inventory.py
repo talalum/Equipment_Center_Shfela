@@ -1,12 +1,14 @@
 """
-חישוב מצב המלאי.
+Stock status calculation.
 
-    הונפק נטו = Σ(שורות הנפקה applied) − Σ(adjustments.delta)
-    נשאר      = תקן − הונפק נטו
-    חסר       = max(0, הונפק נטו)
+    net issued = Σ(applied issuance lines) − Σ(adjustments.delta)
+    remaining  = standard − net issued
+    shortage   = max(0, net issued)
 
-המערכת מניחה שהמחסן מתחיל מלא לפי התקן, וכל הנפקה יוצרת חוסר עד שהמלאי מחודש.
-`נשאר` יכול לעלות מעל התקן אם התקבלה אספקה גדולה — זה מותר, ואז `חסר` הוא 0.
+The system assumes the warehouse starts full at the standard quantity, and that
+every issuance creates a shortage until stock is replenished. `remaining` may
+rise above the standard after a large delivery — that is allowed, and then
+`shortage` is 0.
 """
 from __future__ import annotations
 
@@ -19,8 +21,8 @@ from app.repo import Item
 @dataclass(frozen=True)
 class ItemStatus:
     item: Item
-    issued: int  # סה"כ שהונפק לפי מיילים שנקלטו
-    adjusted: int  # סה"כ תנועות ידניות (חיובי = מלאי שנוסף)
+    issued: int  # total issued according to the emails taken in
+    adjusted: int  # total of the manual movements (positive = stock added)
 
     @property
     def issued_net(self) -> int:
@@ -60,7 +62,7 @@ def _adjustment_totals() -> dict[int, int]:
 
 
 def status_for_all(items: list[Item]) -> list[ItemStatus]:
-    """מצב כל הפריטים. שתי שאילתות צבירה בלבד, לא שאילתה לכל פריט."""
+    """Status of every item. Two aggregate queries only, not one query per item."""
     issued = _issued_totals()
     adjusted = _adjustment_totals()
     return [ItemStatus(item=i, issued=issued.get(i.id, 0), adjusted=adjusted.get(i.id, 0)) for i in items]
@@ -93,8 +95,8 @@ _SORT_KEYS = {
 
 def sort_statuses(statuses: list[ItemStatus], sort: str = "shortage", direction: str = "desc") -> list[ItemStatus]:
     """
-    ברירת המחדל היא חוסר יורד — מה שדורש פעולה נמצא למעלה, תמיד.
-    שובר שוויון קבוע לפי מק"ט כדי שהסדר לא יקפוץ בין רענונים.
+    The default is shortage descending — whatever needs action is at the top, always.
+    A stable tie-break by SKU keeps the order from jumping between refreshes.
     """
     key = _SORT_KEYS.get(sort, _SORT_KEYS["shortage"])
     ordered = sorted(statuses, key=lambda s: s.item.sku)

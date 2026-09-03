@@ -1,7 +1,8 @@
 """
-שליפת מיילים מחשבון ה-Gmail הייעודי דרך IMAP.
+Fetching emails from the dedicated Gmail account over IMAP.
 
-אין כאן שום נגיעה בתשתית ארגונית — רק חשבון Gmail ו-App Password.
+Nothing here touches any corporate infrastructure — only a Gmail account and
+an App Password.
 """
 from __future__ import annotations
 
@@ -33,7 +34,7 @@ class FetchedEmail:
 
 
 class _HTMLToText(HTMLParser):
-    """המרת HTML לטקסט — כשאין חלק text/plain במייל."""
+    """HTML to text conversion — for when the email has no text/plain part."""
 
     _BLOCK_TAGS = {"p", "div", "br", "tr", "li", "table", "h1", "h2", "h3", "h4"}
 
@@ -84,8 +85,8 @@ def _decode_part(part: Message) -> str:
 
 def extract_body(msg: Message) -> str:
     """
-    מעדיף text/plain. אם אין — ממיר את ה-HTML לטקסט.
-    מדלג על קבצים מצורפים.
+    Prefers text/plain. Failing that, converts the HTML to text.
+    Attachments are skipped.
     """
     plain: list[str] = []
     html: list[str] = []
@@ -116,7 +117,7 @@ def _decode_header_value(value: str | None) -> str:
         return ""
     try:
         return str(make_header(decode_header(value)))
-    except Exception:  # כותרת פגומה לא אמורה להפיל שליפה שלמה
+    except Exception:  # a malformed header must not bring down a whole fetch
         return value
 
 
@@ -129,7 +130,7 @@ def _message_date(msg: Message) -> datetime:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed
         except (TypeError, ValueError):
-            log.warning("תאריך לא תקין בכותרת המייל: %r", raw)
+            log.warning("Invalid date in the email header: %r", raw)
     return datetime.now(timezone.utc)
 
 
@@ -147,15 +148,16 @@ def fetch_recent(
     limit: int = 500,
 ) -> list[FetchedEmail]:
     """
-    מושך מיילים מהתקופה האחרונה, בלי תלות בדגל "נקרא".
+    Fetches emails from the recent period, independently of the "seen" flag.
 
-    למה לא לפי UNSEEN: אם מישהו פותח את התיבה ומציץ במייל הנפקה בזמן
-    שהמערכת כבויה, המייל מסומן כנקרא ולא היה נאסף לעולם — הנפקה שנעלמת
-    בשקט. במקום זה נסרקת חלון זמן קבוע, וההגנה מפני ספירה כפולה נשענת
-    על Message-ID שכבר קיים במסד.
+    Why not UNSEEN: if someone opens the mailbox and glances at an issuance email
+    while the system is down, the email is marked as read and would never be
+    collected — an issuance vanishing silently. Instead a fixed time window is
+    scanned, and the protection against double counting rests on the Message-ID
+    already being in the database.
 
-    is_known מקבל Message-ID ומחזיר האם הוא כבר נקלט. גוף המייל נמשך רק
-    עבור מיילים חדשים, ולכן סריקה חוזרת זולה.
+    is_known takes a Message-ID and returns whether it has already been taken in.
+    Bodies are fetched only for new emails, which keeps a repeat scan cheap.
     """
     if not config.imap_configured():
         raise RuntimeError("חסרים פרטי חיבור לתיבה (IMAP_USER / IMAP_PASSWORD).")
@@ -172,29 +174,29 @@ def fetch_recent(
         if status != "OK":
             raise RuntimeError(f"חיפוש בתיבה נכשל: {status}")
 
-        # החדשים ביותר קודם, כדי שגם תיבה עמוסה תתעדכן קודם כל במה שרלוונטי.
+        # Newest first, so that even a busy mailbox is caught up on what matters first.
         uids = list(reversed(data[0].split()))[:limit]
         for uid in uids:
-            # BODY.PEEK בלבד — הקריאה שלנו לעולם לא משנה את מצב התיבה.
+            # BODY.PEEK only — our reading never changes the state of the mailbox.
             status, head = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
             if status != "OK" or not head or not isinstance(head[0], tuple):
-                log.warning("לא ניתן לקרוא כותרות של המייל %r", uid)
+                log.warning("Could not read the headers of email %r", uid)
                 continue
 
             message_id = _header_message_id(head[0][1])
             if message_id and is_known and is_known(message_id):
-                continue  # כבר נקלט — אין צורך למשוך את הגוף
+                continue  # already taken in — no need to fetch the body
 
             status, payload = conn.fetch(uid, "(BODY.PEEK[])")
             if status != "OK" or not payload or not isinstance(payload[0], tuple):
-                log.warning("לא ניתן לקרוא את המייל %r", uid)
+                log.warning("Could not read email %r", uid)
                 continue
 
             msg = email.message_from_bytes(payload[0][1])
             body = extract_body(msg)
             if not message_id:
-                # מייל בלי Message-ID — מזהה יציב הנגזר מהתוכן, כדי שהדדופליקציה
-                # תמשיך לעבוד גם עליו.
+                # An email with no Message-ID — a stable id derived from the content,
+                # so that deduplication keeps working for it too.
                 message_id = synthetic_message_id(body)
                 if is_known and is_known(message_id):
                     continue
@@ -214,5 +216,5 @@ def fetch_recent(
             pass
         conn.logout()
 
-    results.reverse()  # לקליטה לפי סדר כרונולוגי
+    results.reverse()  # so intake happens in chronological order
     return results

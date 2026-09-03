@@ -1,9 +1,9 @@
 """
-כלי עזר ליצירת ה-hash של סיסמת הכניסה.
+Helper for generating the hash of the login password.
 
     python -m app.hashpw
 
-מדביקים את הפלט לתוך APP_PASSWORD_HASH בסביבת ההרצה.
+Paste the output into APP_PASSWORD_HASH in the runtime environment.
 """
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ from app.auth import hash_password
 
 
 def main() -> int:
-    password = getpass.getpass("סיסמה חדשה: ")
+    password = getpass.getpass("New password: ")
     if len(password) < 8:
-        print("הסיסמה קצרה מדי — לפחות 8 תווים.", file=sys.stderr)
+        print("Password is too short — at least 8 characters.", file=sys.stderr)
         return 1
-    if password != getpass.getpass("שוב, לאימות: "):
-        print("הסיסמאות אינן תואמות.", file=sys.stderr)
+    if password != getpass.getpass("Again, to confirm: "):
+        print("Passwords don't match.", file=sys.stderr)
         return 1
-    print("\nהוסיפי את השורה הזו למשתני הסביבה:\n")
+    print("\nAdd this line to your environment variables:\n")
     print(f"APP_PASSWORD_HASH={hash_password(password)}")
     return 0
 

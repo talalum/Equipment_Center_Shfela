@@ -1,11 +1,12 @@
-# סודות — לעולם לא ב-git
+# Secrets — never in git
 .env
-# גם גיבויים וגרסאות מקומיות שלו: .env.local, .env.backup וכל וריאנט אחר.
-# הדפוס הזה מכסה הכל חוץ מהתבנית לדוגמה, שאין בה ערכים אמיתיים.
+# Backups and local variants of it too: .env.local, .env.backup, any other.
+# This pattern covers them all except the example template, which holds no
+# real values.
 .env.*
 !.env.example
 
-# מסד הנתונים המקומי
+# The local database
 data/*.db
 data/*.db-wal
 data/*.db-shm

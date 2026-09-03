@@ -1,9 +1,10 @@
 """
-ניתוח מחדש של הנפקה שכבר במסד.
+Re-analysing an issuance already in the database.
 
-הצורך התגלה בשטח: מייל אמיתי נקלט בגרסה שלא ידעה לקרוא כוכביות הדגשה
-וסומן כ-ignored. אחרי תיקון הפרסר הוא נשאר תקוע — הדדופליקציה לפי
-Message-ID מונעת משיכה חוזרת, ולכן שיפור בקוד לא השפיע עליו כלל.
+The need showed up in the field: a real email was taken in by a version that
+could not read emphasis asterisks, and was marked ignored. After the parser was
+fixed it stayed stuck — deduplication by Message-ID prevents a re-fetch, so the
+improvement in the code had no effect on it at all.
 """
 from __future__ import annotations
 
@@ -21,7 +22,8 @@ class ReanalyseStuckIssuance(DBTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.load_real_items()
-        # בדיוק המצב שנוצר בגרסה הישנה: נשמר בלי שורות, בלי מרכז, כ-ignored.
+        # Exactly the state the old version produced: stored with no lines, no
+        # center, as ignored.
         self.issuance_id = repo.insert_issuance(
             message_id="<stuck@mail>",
             email_date="2026-09-01T20:10:00+00:00",
@@ -43,7 +45,7 @@ class ReanalyseStuckIssuance(DBTestCase):
         }
 
     def test_refetching_would_skip_it(self) -> None:
-        """מוודא את הנחת המוצא: משיכה חוזרת לעולם לא תציל מייל תקוע."""
+        """Confirms the premise: a re-fetch will never rescue a stuck email."""
         self.assertIsNotNone(repo.find_issuance_by_message_id("<stuck@mail>"))
 
     def test_reanalysis_rescues_it(self) -> None:
@@ -70,7 +72,7 @@ class ReanalyseStuckIssuance(DBTestCase):
         )
 
     def test_reanalysis_is_idempotent(self) -> None:
-        """הרצה חוזרת לא מכפילה שורות ולא סופרת פעמיים."""
+        """Running it again neither duplicates lines nor double counts."""
         ingest.reanalyse_issuance(self.issuance_id)
         first = self.shortages()
         for _ in range(3):
@@ -100,7 +102,7 @@ class ReanalyseInBulk(DBTestCase):
 
     def test_only_unapplied_are_touched(self) -> None:
         counts = ingest.reanalyse_unapplied()
-        self.assertEqual(counts["total"], 2, "ההנפקה שכבר נקלטה לא אמורה להיכלל")
+        self.assertEqual(counts["total"], 2, "the already-applied issuance must not be included")
         self.assertEqual(counts["applied"], 1)
         self.assertEqual(counts["ignored"], 1)
 
@@ -116,7 +118,7 @@ class ReanalyseInBulk(DBTestCase):
 
     def test_stock_counts_each_issuance_once(self) -> None:
         ingest.reanalyse_unapplied()
-        # ההנפקה התקינה (2) + התקועה ששוחררה (2) = 4 על מק"ט 1111.
+        # The healthy issuance (2) + the freed stuck one (2) = 4 on SKU 1111.
         self.assertEqual(inventory.status_for_item(repo.find_item_by_sku("1111")).shortage, 4)
 
     def test_nothing_to_do_reports_zero(self) -> None:

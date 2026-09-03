@@ -51,8 +51,8 @@
   </thead>
   <tbody>
   {% for item in items %}
-    {# הטופס עצמו יושב מחוץ לטבלה: <form> בתוך <tr> אינו HTML תקין.
-       הקישור נעשה דרך תכונת form= על כל שדה. #}
+    {# The form itself sits outside the table: a <form> inside a <tr> is not valid
+       HTML. The link is made through the form= attribute on each field. #}
     <tr class="{% if not item.active %}muted-row{% endif %}">
       <td class="num-col" data-label='מק"ט'>{{ item.sku }}</td>
       <td data-label="שם פריט">

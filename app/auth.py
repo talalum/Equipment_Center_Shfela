@@ -1,8 +1,9 @@
 """
-כניסה עם סיסמה אחת.
+Login with a single password.
 
-הסיסמה לעולם לא נשמרת בקוד ולא במסד — רק hash מסוג PBKDF2 במשתנה סביבה.
-ליצירת ה-hash:  python -m app.hashpw
+The password is never stored in the code or in the database — only a PBKDF2
+hash, in an environment variable.
+To generate the hash:  python -m app.hashpw
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ class _Attempts:
 
 @dataclass
 class LoginThrottle:
-    """הגבלת ניסיונות כניסה, לפי כתובת. מספיק בזיכרון — משתמשת אחת, מופע אחד."""
+    """Login attempt throttling, keyed by address. In memory is enough — one user, one process."""
 
     attempts: dict[str, _Attempts] = field(default_factory=dict)
 

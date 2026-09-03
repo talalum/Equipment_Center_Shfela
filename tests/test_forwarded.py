@@ -1,11 +1,13 @@
 """
-מייל הנפקה אמיתי שהועבר דרך ג'ימייל.
+A real issuance email, forwarded through Gmail.
 
-המייל הזה נכשל בגרסה הראשונה משלוש סיבות שהתגלו רק מול דואר אמיתי:
-  1. ג'ימייל מציג מודגשים בטקסט כ-*כוכביות*, וזה שבר את כל העוגנים.
-  2. גוף המייל עטוף בשתי כותרות העברה.
-  3. באג שלי: המייל לא נפרס, ולכן "מרכז ציוד" יצא ריק, והקוד סימן אותו
-     כהנפקה של מרכז אחר — כלומר בלע אותו בשקט עם הודעה מטעה.
+This email failed in the first version for three reasons that only showed up
+against real mail:
+  1. Gmail renders bold text as *asterisks*, which broke every anchor.
+  2. The email body is wrapped in two forwarding headers.
+  3. A bug of mine: the email did not parse, so "equipment center" came out
+     empty and the code marked it as an issuance of another center — that is,
+     swallowed it silently behind a misleading message.
 """
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ class ParsesTheRealForwardedEmail(unittest.TestCase):
         self.assertTrue(self.parsed.ok)
 
     def test_center_is_read_through_the_bold_markers(self) -> None:
-        """השורה במקור: '*מרכז ציוד: *מרכז ציוד שפלה'"""
+        """The line in the original: '*מרכז ציוד: *מרכז ציוד שפלה'"""
         self.assertEqual(self.parsed.center, "מרכז ציוד שפלה")
         self.assertTrue(center_matches(self.parsed))
 
@@ -47,7 +49,7 @@ class ParsesTheRealForwardedEmail(unittest.TestCase):
         self.assertEqual([line.qty for line in self.parsed.lines], [2, 1, 1, 1, 1, 5, 5])
 
     def test_asterisks_inside_item_names_are_preserved(self) -> None:
-        """הסרת ההדגשות לא תפגע ב'פד גזה סטרילי 10*10'."""
+        """Stripping the emphasis must not damage 'פד גזה סטרילי 10*10'."""
         names = [line.raw_name for line in self.parsed.lines]
         self.assertIn("פד גזה סטרילי 10*10", names)
         self.assertIn("פד גזה סטרילי 5*5", names)
@@ -108,7 +110,7 @@ class IngestTheForwardedEmail(DBTestCase):
 
 
 class UnparsableEmailIsNeverSilentlyIgnored(DBTestCase):
-    """הרגרסיה של הבאג: מייל שנכשל בפירוק חייב להגיע לביקורת, לא להיעלם."""
+    """The regression for that bug: an email that fails to parse must reach review, not vanish."""
 
     def setUp(self) -> None:
         super().setUp()

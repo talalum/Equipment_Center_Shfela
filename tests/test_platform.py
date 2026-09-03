@@ -1,8 +1,9 @@
 """
-תקינות בין פלטפורמות — בעיקר ווינדוס.
+Cross-platform correctness — Windows above all.
 
-הבדיקות כאן נכתבו אחרי שהמערכת נפלה בווינדוס על אזור הזמן: שם למערכת ההפעלה
-אין מסד אזורי זמן, ולכן ZoneInfo נכשל אלא אם מותקנת חבילת tzdata.
+These tests were written after the system crashed on Windows over the timezone:
+the operating system there has no timezone database, so ZoneInfo fails unless
+the tzdata package is installed.
 """
 from __future__ import annotations
 
@@ -12,9 +13,10 @@ import unittest
 import zoneinfo
 from datetime import datetime, timezone
 
-# נתיב שאינו קיים, אבל *מוחלט* בכל מערכת הפעלה. בווינדוס נתיב מוחלט חייב
-# אות כונן, ו-reset_tzpath דוחה נתיב יחסי — ולכן "/nonexistent-tzdb" גולמי
-# היה מפיל את הבדיקה הזו בווינדוס בלבד.
+# A path that does not exist, but is *absolute* on every operating system. On
+# Windows an absolute path needs a drive letter, and reset_tzpath rejects a
+# relative one — so a raw "/nonexistent-tzdb" used to break this test on
+# Windows alone.
 MISSING_TZDB = os.path.abspath("/nonexistent-tzdb")
 
 
@@ -27,12 +29,12 @@ class TimezoneFallback(unittest.TestCase):
         importlib.reload(importlib.import_module("app.main"))
 
     def test_startup_survives_a_missing_timezone_database(self) -> None:
-        """מדמה ווינדוס: אין שום נתיב עם מסד אזורי זמן."""
+        """Simulates Windows: no path holds a timezone database."""
         zoneinfo.reset_tzpath(to=[MISSING_TZDB])
         zoneinfo.ZoneInfo.clear_cache()
         main = importlib.reload(importlib.import_module("app.main"))
 
-        self.assertIsNotNone(main.LOCAL_TZ, "חייב להיבחר אזור זמן חלופי ולא לקרוס")
+        self.assertIsNotNone(main.LOCAL_TZ, "a fallback timezone must be chosen rather than crashing")
         rendered = main._local_dt(datetime(2026, 9, 1, 14, 32, tzinfo=timezone.utc))
         self.assertRegex(rendered, r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$")
 
@@ -45,7 +47,7 @@ class TimezoneFallback(unittest.TestCase):
         from app.main import _local_timezone
 
         tz = _local_timezone("Asia/Jerusalem")
-        # ספטמבר בישראל = שעון קיץ, UTC+3.
+        # September in Israel = daylight saving time, UTC+3.
         offset = datetime(2026, 9, 1, 12, tzinfo=timezone.utc).astimezone(tz).utcoffset()
         self.assertEqual(offset.total_seconds(), 3 * 3600)
 
@@ -64,8 +66,8 @@ class DateRendering(unittest.TestCase):
 
 class NoRemovedStdlibModules(unittest.TestCase):
     """
-    מודולים שהוסרו בפייתון 3.13/3.14. המשתמשת מריצה 3.14, ולכן שימוש
-    באחד מהם היה מפיל את המערכת אצלה בלבד.
+    Modules removed in Python 3.13/3.14. The user runs 3.14, so using one of them
+    would bring the system down on her machine alone.
     """
 
     REMOVED = {
@@ -84,7 +86,7 @@ class NoRemovedStdlibModules(unittest.TestCase):
             for module in self.REMOVED:
                 if re.search(rf"^\s*(import|from)\s+{module}\b", source, re.MULTILINE):
                     offenders.append(f"{path.name}: {module}")
-        self.assertEqual(offenders, [], f"מודולים שהוסרו מפייתון: {offenders}")
+        self.assertEqual(offenders, [], f"modules removed from Python: {offenders}")
 
 
 if __name__ == "__main__":

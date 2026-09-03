@@ -1,9 +1,9 @@
 """
-פירוק מייל הנפקה לרשומות מסודרות.
+Parsing an issuance email into orderly records.
 
-עקרון: אף פעם לא מנחשים. שורה בין העוגנים שלא נפרסה מעבירה את *כל* ההנפקה
-לביקורת ידנית — קליטה חלקית תיצור מלאי שגוי בשקט, וזה בדיוק מה שהמערכת
-אמורה למנוע.
+The principle: never guess. A line between the anchors that failed to parse
+sends the *whole* issuance to manual review — a partial intake would silently
+produce wrong stock, which is exactly what this system exists to prevent.
 """
 from __future__ import annotations
 
@@ -36,8 +36,9 @@ class ParsedIssuance:
     center: str | None = None
     lines: list[ParsedLine] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    #: האם נמצאה בכלל כותרת רשימת הפריטים. מבדיל בין "מייל הנפקה שנכשל
-    #: בפירוק" (דורש טיפול) לבין "מייל שאינו הנפקה" (אפשר להתעלם).
+    #: Whether the item-list heading was found at all. Distinguishes "an issuance
+    #: email that failed to parse" (needs attention) from "not an issuance email"
+    #: (safe to ignore).
     has_items_section: bool = False
 
     @property
@@ -71,13 +72,14 @@ def load_format(path: str | None = None) -> EmailFormat:
     )
 
 
-# כשג'ימייל מציג מייל HTML כטקסט, הוא עוטף מודגשים בכוכביות:
+# When Gmail renders an HTML email as text, it wraps bold text in asterisks:
 #   *המוצרים שהונפקו*:      *מרכז ציוד: *מרכז ציוד שפלה
-# אסור להסיר את הכוכבית מתוך שמות פריטים כמו "פד גזה סטרילי 10*10",
-# ולכן מוסרות רק כוכביות שאינן בין שתי ספרות.
+# The asterisk must not be stripped out of item names such as
+# "פד גזה סטרילי 10*10", so only asterisks that are not between two digits
+# are removed.
 _EMPHASIS_RE = re.compile(r"(?<!\d)\*|\*(?!\d)")
 
-# תחילית ציטוט בהעברת מייל (נפוץ ב-Outlook): "> שורה מקורית".
+# The quote prefix in a forwarded email (common in Outlook): "> original line".
 _QUOTE_RE = re.compile(r"^\s*(?:>\s?)+")
 
 
@@ -101,7 +103,7 @@ def _first_match(lines: list[str], pattern: re.Pattern[str], group: str) -> str 
 
 
 def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
-    """מפרק את גוף המייל. לא נוגע במסד הנתונים ולא מחליט מה ייקלט."""
+    """Parses the email body. Does not touch the database and does not decide what is taken in."""
     fmt = fmt or load_format()
     result = ParsedIssuance()
 
@@ -144,7 +146,7 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
             raw_sku=clean_text(m.group("sku")),
             qty=qty,
         )
-        # אותו מק"ט פעמיים באותו מייל — מאחדים ולא מאבדים כמות.
+        # The same SKU twice in one email — merged, so no quantity is lost.
         key = parsed.normalized_sku
         if key in seen:
             idx = seen[key]
@@ -161,7 +163,7 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
 
 
 def center_matches(parsed: ParsedIssuance, fmt: EmailFormat | None = None) -> bool:
-    """האם ההנפקה שייכת למרכז הציוד שלנו. מרכז ריק בהגדרות = לקלוט מכולם."""
+    """Whether the issuance belongs to our equipment center. An empty center in the settings = accept from all."""
     fmt = fmt or load_format()
     if not fmt.expected_center:
         return True

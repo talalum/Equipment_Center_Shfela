@@ -1,8 +1,9 @@
 """
-טעינת קובץ .env.
+Loading of the .env file.
 
-בלי זה היה צריך להגדיר משתני סביבה מחדש בכל הפעלה — מייגע במיוחד בווינדוס.
-מימוש קטן על הספרייה הסטנדרטית, בלי תלות חיצונית.
+Without it, environment variables would have to be set again on every run —
+especially tedious on Windows. A small implementation on top of the standard
+library, with no external dependency.
 """
 from __future__ import annotations
 
@@ -12,10 +13,11 @@ from pathlib import Path
 
 def parse(text: str) -> dict[str, str]:
     """
-    פורמט KEY=VALUE, שורה לשורה.
+    KEY=VALUE format, one line at a time.
 
-    נתמכים: שורות ריקות, הערות עם #, מרכאות מסביב לערך, ותחילית export.
-    ערך יכול להכיל = (למשל hash של סיסמה), ולכן מפצלים רק על ה-= הראשון.
+    Supported: blank lines, # comments, quotes around the value, and an export
+    prefix. A value may itself contain = (a password hash, for instance), so
+    only the first = is treated as the separator.
     """
     values: dict[str, str] = {}
     for raw_line in text.splitlines():
@@ -39,10 +41,11 @@ def parse(text: str) -> dict[str, str]:
 
 def load(path: str | Path, override: bool = False) -> dict[str, str]:
     """
-    טוען את הקובץ אל תוך משתני הסביבה.
+    Loads the file into the environment variables.
 
-    כברירת מחדל משתנה שכבר מוגדר בסביבה *מנצח* את הקובץ, כדי שבענן
-    ההגדרות של שירות האירוח יגברו על קובץ שנשאר בטעות בתמונה.
+    By default a variable already present in the environment *wins* over the
+    file, so that in the cloud the hosting service settings take precedence
+    over a file left behind in the image by mistake.
     """
     file_path = Path(path)
     if not file_path.is_file():

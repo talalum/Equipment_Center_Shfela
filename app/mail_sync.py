@@ -1,4 +1,4 @@
-"""גשר בין שליפת המיילים לקליטתם למסד."""
+"""The bridge between fetching the emails and taking them into the database."""
 from __future__ import annotations
 
 import logging
@@ -39,27 +39,27 @@ class SyncResult:
         return " · ".join(parts)
 
 
-#: תוצאת הריצה האחרונה — מוצגת בכותרת לוח המצב.
+#: Result of the most recent run — shown in the dashboard header.
 last_sync: SyncResult | None = None
 
-# משיכה אחת בכל רגע: הכפתור הידני והתזמון לא ירוצו יחד.
+# One fetch at a time: the manual button and the scheduler must not run together.
 _lock = threading.Lock()
 
 
 def sync_once() -> SyncResult:
-    """מושך את המיילים שלא נקראו וקולט אותם. בטוח להרצה חוזרת."""
+    """Fetches the recent emails and takes them in. Safe to run repeatedly."""
     global last_sync
     if not _lock.acquire(blocking=False):
         return last_sync or SyncResult(error="משיכה כבר רצה כרגע.")
     try:
         result = SyncResult()
         try:
-            # גוף המייל נמשך רק למיילים שעוד לא במסד — סריקה חוזרת זולה.
+            # Bodies are fetched only for emails not yet in the database — a repeat scan is cheap.
             emails = fetcher.fetch_recent(
                 is_known=lambda mid: repo.find_issuance_by_message_id(mid) is not None
             )
-        except Exception as exc:  # רשת/אימות — לא מפיל את השרת
-            log.exception("משיכת מיילים נכשלה")
+        except Exception as exc:  # network/auth — must not bring the server down
+            log.exception("Mail fetch failed")
             result.error = str(exc)
             last_sync = result
             return result

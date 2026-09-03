@@ -1,15 +1,16 @@
 """
-העברת הנתונים מקובץ SQLite מקומי אל מסד Postgres.
+Moving the data from a local SQLite file into a Postgres database.
 
-    py -m app.migrate_to_postgres              # העברה רגילה
-    py -m app.migrate_to_postgres --dry-run    # רק מראה מה יעבור
-    py -m app.migrate_to_postgres --replace    # מוחק את היעד תחילה
+    py -m app.migrate_to_postgres              # an ordinary migration
+    py -m app.migrate_to_postgres --dry-run    # only shows what would move
+    py -m app.migrate_to_postgres --replace    # wipes the target first
 
-המקור הוא DB_PATH והיעד הוא DATABASE_URL — שניהם נקראים מ-.env.
-הסקריפט קורא מהמקור בלבד-קריאה ולעולם לא משנה אותו, ולכן בטוח להריץ אותו
-שוב אחרי תיקון.
+The source is DB_PATH and the target is DATABASE_URL — both are read from .env.
+The script opens the source read-only and never modifies it, so it is safe to
+run again after a fix.
 
-המזהים המקוריים נשמרים כפי שהם, כדי שהקשרים בין הטבלאות יישארו תקינים.
+The original ids are preserved as they are, so that the relations between the
+tables stay intact.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ from pathlib import Path
 from app import config, db
 from app.console import force_utf8_output
 
-#: סדר ההעברה הוא סדר התלויות: טבלה מועברת רק אחרי מה שהיא מצביעה אליו.
+#: The migration order is the dependency order: a table moves only after
+#: whatever it points at.
 TABLES = ("items", "issuances", "issuance_lines", "adjustments", "import_runs")
 
 BATCH = 500
@@ -28,7 +30,7 @@ BATCH = 500
 
 def _open_source(path: str) -> sqlite3.Connection:
     if not Path(path).is_file():
-        raise SystemExit(f"לא נמצא קובץ מסד מקור: {path}")
+        raise SystemExit(f"Source database file not found: {path}")
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
@@ -40,7 +42,7 @@ def _source_counts(src: sqlite3.Connection) -> dict[str, int]:
         try:
             counts[table] = src.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         except sqlite3.OperationalError:
-            counts[table] = 0  # טבלה שלא קיימת במסד ישן
+            counts[table] = 0  # a table that does not exist in an older database
     return counts
 
 
@@ -53,8 +55,9 @@ def _target_counts(target) -> dict[str, int]:
 
 def _copy_table(src: sqlite3.Connection, target, table: str) -> int:
     """
-    מעתיק טבלה אחת. העמודות נקראות מהמקור בזמן ריצה, ולכן מסד שנוצר לפני
-    שנוספה עמודה יעבור בלי לערוך כאן דבר.
+    Copies a single table. The columns are read from the source at runtime, so a
+    database created before a column was added migrates without editing anything
+    here.
     """
     try:
         cursor = src.execute(f"SELECT * FROM {table}")
@@ -75,8 +78,8 @@ def _copy_table(src: sqlite3.Connection, target, table: str) -> int:
 
 def _reset_sequences(target) -> None:
     """
-    אחרי הכנסה של מזהים מפורשים המונה הפנימי עדיין עומד על 1, והכנסה
-    הבאה הייתה מתנגשת. מיישרים אותו לערך הגבוה ביותר שקיים בפועל.
+    After inserting explicit ids the internal counter still stands at 1, and the
+    next insert would collide. It is realigned to the highest id actually present.
     """
     for table in TABLES:
         target.execute(
@@ -101,50 +104,51 @@ def main(argv: list[str]) -> int:
 
     if not config.DATABASE_URL:
         raise SystemExit(
-            "DATABASE_URL לא מוגדר. יש להוסיף אותו ל-.env עם כתובת מסד ה-Postgres."
+            "DATABASE_URL is not set. Add it to .env with the address of the Postgres database."
         )
 
-    print("\n=== העברת נתונים ל-Postgres ===\n")
-    print(f"מקור: {config.DB_PATH}")
-    print(f"יעד:  {config.DATABASE_URL.split('@')[-1]}\n")  # בלי הסיסמה
+    print("\n=== Migrating data to Postgres ===\n")
+    print(f"Source: {config.DB_PATH}")
+    print(f"Target: {config.DATABASE_URL.split('@')[-1]}\n")  # without the password
 
     src = _open_source(config.DB_PATH)
     counts = _source_counts(src)
 
-    print("במקור:")
+    print("In the source:")
     for table, n in counts.items():
         print(f"  {table:16} {n}")
 
     if dry_run:
-        # בודקים את החיבור ליעד גם בהרצה יבשה: זו התקלה הנפוצה ביותר,
-        # ועדיף לגלות אותה לפני שנוגעים בנתונים ולא באמצע ההעברה.
-        print("\nבודק חיבור ליעד...")
+        # The connection to the target is checked on a dry run too: it is by far
+        # the most common failure, and it is better to find it before touching
+        # any data rather than halfway through the migration.
+        print("\nChecking the connection to the target...")
         try:
             version = db.connect().execute("SELECT version() AS v").fetchone()["v"]
         except Exception as exc:
-            raise SystemExit(f"  ✗ החיבור נכשל:\n     {exc}")
-        print(f"  ✓ מחובר: {version.split(' on ')[0]}")
-        print("\n--dry-run — לא הועברו נתונים.\n")
+            raise SystemExit(f"  ✗ The connection failed:\n     {exc}")
+        print(f"  ✓ Connected: {version.split(' on ')[0]}")
+        print("\n--dry-run — no data was moved.\n")
         return 0
 
-    db.init_db()  # יוצר את הסכימה ביעד אם עוד אין
+    db.init_db()  # creates the schema on the target if it is not there yet
     target = db.connect()
 
     existing = _target_counts(target)
     if any(existing.values()):
         if not replace:
-            print("\nביעד כבר יש נתונים:")
+            print("\nThe target already holds data:")
             for table, n in existing.items():
                 if n:
                     print(f"  {table:16} {n}")
             raise SystemExit(
-                "\nההעברה בוטלה כדי לא לערבב נתונים.\n"
-                "להריץ שוב עם --replace כדי למחוק את היעד ולהעביר מחדש."
+                "\nThe migration was cancelled so as not to mix data together.\n"
+                "Run again with --replace to wipe the target and migrate afresh."
             )
-        print("\n--replace — מוחק את הנתונים הקיימים ביעד.")
+        print("\n--replace — wiping the existing data on the target.")
         _truncate(target)
 
-    print("\nמעביר:")
+    print("\nMigrating:")
     for table in TABLES:
         moved = _copy_table(src, target, table)
         print(f"  {table:16} {moved}")
@@ -154,11 +158,11 @@ def main(argv: list[str]) -> int:
     final = _target_counts(target)
     mismatched = [t for t in TABLES if final[t] != counts[t]]
     if mismatched:
-        raise SystemExit(f"\nאי-התאמה בספירה בטבלאות: {mismatched}. ההעברה לא הושלמה כראוי.")
+        raise SystemExit(f"\nCount mismatch in tables: {mismatched}. The migration did not complete properly.")
 
     print("\n" + "=" * 50)
-    print("ההעברה הושלמה. הספירות ביעד תואמות למקור.")
-    print("קובץ ה-SQLite לא שונה ונשאר כגיבוי.")
+    print("The migration is complete. The counts on the target match the source.")
+    print("The SQLite file was not modified and remains as a backup.")
     print("=" * 50 + "\n")
     return 0
 
@@ -167,5 +171,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv[1:]))
     except KeyboardInterrupt:
-        print("\nבוטל.")
+        print("\nCancelled.")
         sys.exit(1)

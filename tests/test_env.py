@@ -1,4 +1,4 @@
-"""קריאת וכתיבת קובץ .env."""
+"""Reading and writing the .env file."""
 from __future__ import annotations
 
 import os
@@ -15,10 +15,10 @@ class ParseEnv(unittest.TestCase):
         self.assertEqual(env_file.parse("A=1\nB=two"), {"A": "1", "B": "two"})
 
     def test_comments_and_blank_lines_ignored(self) -> None:
-        self.assertEqual(env_file.parse("# הערה\n\nA=1\n  # עוד\n"), {"A": "1"})
+        self.assertEqual(env_file.parse("# a comment\n\nA=1\n  # another\n"), {"A": "1"})
 
     def test_value_may_contain_equals(self) -> None:
-        """hash של סיסמה מכיל $ ו-=; אסור שייחתך."""
+        """A password hash contains $ and =; it must not be truncated."""
         encoded = "pbkdf2_sha256$240000$abc==$def=="
         self.assertEqual(env_file.parse(f"APP_PASSWORD_HASH={encoded}")["APP_PASSWORD_HASH"], encoded)
 
@@ -57,7 +57,7 @@ class LoadEnv(unittest.TestCase):
         self.assertEqual(os.environ["ECS_T1"], "fromfile")
 
     def test_existing_environment_wins(self) -> None:
-        """בענן ההגדרות של שירות האירוח חייבות לגבור על קובץ שנשאר בתמונה."""
+        """In the cloud the hosting service settings must win over a file left in the image."""
         os.environ["ECS_T2"] = "from-cloud"
         self.path.write_text("ECS_T2=from-file\n", encoding="utf-8")
         env_file.load(self.path)
@@ -73,7 +73,7 @@ class LoadEnv(unittest.TestCase):
         self.assertEqual(env_file.load(Path(self._tmp.name) / "nope.env"), {})
 
     def test_bom_is_handled(self) -> None:
-        """Notepad בווינדוס שומר עם BOM."""
+        """Notepad on Windows saves with a BOM."""
         self.path.write_text("﻿ECS_T1=ok\n", encoding="utf-8")
         self.assertEqual(env_file.load(self.path)["ECS_T1"], "ok")
 
@@ -91,10 +91,10 @@ class WriteEnv(unittest.TestCase):
         self.assertEqual(env_file.parse(self.path.read_text(encoding="utf-8")), {"A": "1"})
 
     def test_updates_in_place_and_keeps_comments(self) -> None:
-        self.path.write_text("# הגדרות\nA=old\nB=keep\n", encoding="utf-8")
+        self.path.write_text("# settings\nA=old\nB=keep\n", encoding="utf-8")
         _write_env(self.path, {"A": "new"})
         text = self.path.read_text(encoding="utf-8")
-        self.assertIn("# הגדרות", text)
+        self.assertIn("# settings", text)
         self.assertEqual(env_file.parse(text), {"A": "new", "B": "keep"})
 
     def test_appends_new_keys(self) -> None:

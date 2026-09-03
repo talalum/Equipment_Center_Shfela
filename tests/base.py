@@ -1,13 +1,14 @@
 """
-תשתית משותפת לטסטים — מסד נקי לכל בדיקה.
+Shared test infrastructure — a clean database for every test.
 
-כברירת מחדל רץ מול SQLite בקובץ זמני, בלי שום תלות חיצונית. אם מוגדר
-DATABASE_URL_TEST אותן בדיקות בדיוק ירוצו מול Postgres אמיתי:
+By default it runs against SQLite in a temporary file, with no external
+dependency at all. If DATABASE_URL_TEST is set, those very same tests run
+against a real Postgres:
 
     DATABASE_URL_TEST=postgresql://... py -m unittest discover -s tests -t .
 
-כך אותה חבילת בדיקות מאמתת את שני המנועים, ואין סיכון שהתנהגות תתפצל
-ביניהם בלי שנדע.
+That way one test suite verifies both engines, and there is no risk of the
+behaviour diverging between them without anyone noticing.
 """
 from __future__ import annotations
 
@@ -23,20 +24,22 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "emails"
 SAMPLE_EMAIL = (FIXTURES / "sample_issuance.txt").read_text(encoding="utf-8")
 REAL_CSV = Path(__file__).resolve().parent.parent / "data" / "Inventory_Report.csv"
 
-#: כתובת מסד Postgres לבדיקות. ריק = לרוץ מול SQLite.
+#: Address of the Postgres database used for testing. Empty = run against SQLite.
 POSTGRES_TEST_URL = os.environ.get("DATABASE_URL_TEST", "")
 
-#: סדר הפוך לסדר התלויות, כדי ש-TRUNCATE לא ייפול על מפתחות זרים.
+#: The reverse of the dependency order, so that TRUNCATE does not trip over
+#: foreign keys.
 _ALL_TABLES = "issuance_lines, adjustments, import_runs, issuances, items"
 
 
 class DBTestCase(unittest.TestCase):
-    """כל בדיקה מקבלת מסד ריק, כך שאין דליפה בין בדיקות."""
+    """Every test gets an empty database, so nothing leaks between tests."""
 
     def setUp(self) -> None:
         from app import config, db
 
-        # ברירת המחדל היא אתר בלי סיסמה. מחלקה שבודקת אימות מגדירה זאת בעצמה.
+        # The default is a site with no password. A class testing authentication
+        # sets that up for itself.
         self._auth = (config.APP_PASSWORD_HASH, config.SESSION_SECRET)
         config.APP_PASSWORD_HASH = ""
         config.SESSION_SECRET = "unit-test-secret"
@@ -48,7 +51,7 @@ class DBTestCase(unittest.TestCase):
             config.DATABASE_URL = POSTGRES_TEST_URL
             db.reset_for_tests()
             db.init_db()
-            # ריקון מהיר במקום בנייה מחדש של הסכימה לכל בדיקה.
+            # A fast wipe instead of rebuilding the schema for every test.
             db.connect().execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
         else:
             config.DATABASE_URL = ""

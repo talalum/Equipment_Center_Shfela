@@ -1,4 +1,4 @@
-"""חילוץ גוף המייל — קידוד עברית, HTML, תאריכים, ושליפה מהתיבה."""
+"""Extracting the email body — Hebrew encoding, HTML, dates, and fetching from the mailbox."""
 from __future__ import annotations
 
 import email
@@ -71,7 +71,7 @@ class HtmlConversion(unittest.TestCase):
 
 
 class FakeIMAP:
-    """תיבה מזויפת — מאפשרת לבדוק את fetch_unseen בלי שרת אמיתי."""
+    """A fake mailbox — lets the fetch be tested without a real server."""
 
     def __init__(self, messages: list[bytes]) -> None:
         self.messages = messages
@@ -82,7 +82,7 @@ class FakeIMAP:
         self.header_fetches = 0
         self.body_fetches = 0
 
-    def __call__(self, host, port):  # מחליף את imaplib.IMAP4_SSL
+    def __call__(self, host, port):  # stands in for imaplib.IMAP4_SSL
         return self
 
     def login(self, user, password):
@@ -97,7 +97,7 @@ class FakeIMAP:
         return ("OK", [b" ".join(str(i + 1).encode() for i in range(len(self.messages)))])
 
     def fetch(self, uid, spec):
-        assert "PEEK" in spec, "חובה לקרוא ב-PEEK כדי לא לשנות את מצב התיבה"
+        assert "PEEK" in spec, "must read with PEEK so the mailbox state is not changed"
         raw = self.messages[int(uid) - 1]
         if "HEADER.FIELDS" in spec:
             self.header_fetches += 1
@@ -142,8 +142,9 @@ class FetchRecent(unittest.TestCase):
 
     def test_searches_by_date_not_by_unread_flag(self) -> None:
         """
-        הרגרסיה המרכזית: חיפוש לפי UNSEEN אומר שמייל שמישהו כבר פתח
-        בתיבה לא ייאסף לעולם — הנפקה שנעלמת בשקט.
+        The central regression: searching by UNSEEN means an email someone has
+        already opened in the mailbox would never be collected — an issuance
+        vanishing silently.
         """
         fake = FakeIMAP([self._message("<a@x>")])
         self._fetch(fake)
@@ -153,12 +154,12 @@ class FetchRecent(unittest.TestCase):
 
     def test_a_message_already_read_is_still_fetched(self) -> None:
         fake = FakeIMAP([self._message("<already-read@x>")])
-        fake.marked_seen.append(b"1")  # כאילו מישהו פתח אותו בתיבה
+        fake.marked_seen.append(b"1")  # as though someone had opened it in the mailbox
         emails = self._fetch(fake)
         self.assertEqual(len(emails), 1)
 
     def test_nothing_is_marked_as_read(self) -> None:
-        """קריאה מהתיבה לא משנה את מצבה — הדדופליקציה נשענת על המסד."""
+        """Reading the mailbox does not change its state — deduplication rests on the database."""
         fake = FakeIMAP([self._message("<a@x>"), self._message("<b@x>")])
         self._fetch(fake)
         self.assertEqual(fake.marked_seen, [])
@@ -173,12 +174,12 @@ class FetchRecent(unittest.TestCase):
         self.assertEqual(parse(emails[0].body).errors, [])
 
     def test_known_messages_skip_the_body_fetch(self) -> None:
-        """סריקה חוזרת חייבת להיות זולה: רק כותרות למיילים שכבר נקלטו."""
+        """A repeat scan must be cheap: headers only for emails already taken in."""
         fake = FakeIMAP([self._message("<known@x>"), self._message("<fresh@x>")])
         emails = self._fetch(fake, is_known=lambda mid: mid == "<known@x>")
         self.assertEqual([e.message_id for e in emails], ["<fresh@x>"])
         self.assertEqual(fake.header_fetches, 2)
-        self.assertEqual(fake.body_fetches, 1, "גוף נמשך רק למייל החדש")
+        self.assertEqual(fake.body_fetches, 1, "a body is fetched only for the new email")
 
     def test_everything_is_new_when_no_filter_is_given(self) -> None:
         fake = FakeIMAP([self._message("<a@x>"), self._message("<b@x>")])
@@ -215,10 +216,10 @@ class FetchRecent(unittest.TestCase):
 
 class SyncHandlesFailures(unittest.TestCase):
     def test_connection_error_is_reported_not_raised(self) -> None:
-        """תקלת רשת או אימות לא אמורה להפיל את השרת."""
+        """A network or authentication failure must not bring the server down."""
         from app import mail_sync
 
-        with mock.patch.object(fetcher, "fetch_recent", side_effect=OSError("אין חיבור")):
+        with mock.patch.object(fetcher, "fetch_recent", side_effect=OSError("no connection")):
             result = mail_sync.sync_once()
         self.assertIsNotNone(result.error)
         self.assertIn("שגיאה במשיכת מיילים", result.summary())

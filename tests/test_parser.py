@@ -1,4 +1,4 @@
-"""פירוק מייל ההנפקה — על התבנית האמיתית."""
+"""Parsing the issuance email — against the real format."""
 from __future__ import annotations
 
 import unittest
@@ -30,7 +30,8 @@ class ParseRealEmail(unittest.TestCase):
         self.assertEqual([line.qty for line in self.parsed.lines], [2, 1, 1, 1, 1, 5, 5])
 
     def test_raw_names_kept_for_the_record(self) -> None:
-        # השם מהמייל נשמר כלשונו — הוא שונה מהשם בקובץ בשלוש מהשורות.
+        # The name from the email is kept verbatim — it differs from the name in
+        # the file on three of the lines.
         names = [line.raw_name for line in self.parsed.lines]
         self.assertIn("פלסטרים", names)
         self.assertIn("גליל אגד 5 ס\"מ", names)
@@ -72,8 +73,8 @@ class ParseEdgeCases(unittest.TestCase):
         parsed = parse(doubled)
         self.assertEqual(parsed.errors, [])
         matching = [line for line in parsed.lines if line.normalized_sku == "1111"]
-        self.assertEqual(len(matching), 1, "אותו מק\"ט פעמיים צריך להתאחד לשורה אחת")
-        self.assertEqual(matching[0].qty, 5, "הכמויות צריכות להיסכם ולא ללכת לאיבוד")
+        self.assertEqual(len(matching), 1, "the same SKU twice must merge into a single line")
+        self.assertEqual(matching[0].qty, 5, "the quantities must be summed and not lost")
 
     def test_tolerates_quote_and_dash_variants(self) -> None:
         variant = SAMPLE_EMAIL.replace(

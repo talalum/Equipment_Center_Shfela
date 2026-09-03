@@ -1,4 +1,4 @@
-"""בדיקות ברמת ה-HTTP — קוראות ל-WSGI ישירות, בלי להרים שרת."""
+"""HTTP-level tests — they call WSGI directly, without starting a server."""
 from __future__ import annotations
 
 import io
@@ -11,7 +11,7 @@ from app import auth, config
 
 
 class WSGIClient:
-    """לקוח מינימלי שמחזיק עוגיות בין בקשות."""
+    """A minimal client that keeps cookies between requests."""
 
     def __init__(self) -> None:
         from app.main import application
@@ -68,7 +68,7 @@ class PagesRender(DBTestCase):
     def test_every_page_returns_200(self) -> None:
         for path in ("/", "/items", "/issuances", "/review", "/movements", "/paste", "/healthz"):
             status, _, _ = self.client.get(path)
-            self.assertEqual(status, 200, f"{path} החזיר {status}")
+            self.assertEqual(status, 200, f"{path} returned {status}")
 
     def test_dashboard_lists_all_items(self) -> None:
         _, _, body = self.client.get("/")

@@ -1,9 +1,9 @@
 """
-שכבת התאימות בין SQLite ל-Postgres.
+The compatibility layer between SQLite and Postgres.
 
-הבדיקות כאן אינן דורשות שרת Postgres — הן בודקות את התרגום ואת הסכימה
-בלבד. בדיקות מקצה-לקצה מול מסד אמיתי יושבות ב-test_postgres_live.py
-ומדלגות על עצמן כשאין DATABASE_URL_TEST.
+These tests need no Postgres server — they check the translation and the schema
+alone. End-to-end coverage against a real database comes from running the whole
+suite with DATABASE_URL_TEST set; see tests/base.py.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class PlaceholderTranslation(unittest.TestCase):
         )
 
     def test_question_mark_inside_a_string_literal_is_left_alone(self) -> None:
-        """סימן שאלה בתוך מחרוזת הוא תוכן, לא פרמטר."""
+        """A question mark inside a string is content, not a parameter."""
         self.assertEqual(
             db.to_postgres_sql("SELECT * FROM t WHERE note = 'why?' AND id = ?"),
             "SELECT * FROM t WHERE note = 'why?' AND id = %s",
@@ -32,7 +32,7 @@ class PlaceholderTranslation(unittest.TestCase):
         self.assertEqual(db.to_postgres_sql(sql), sql)
 
     def test_the_real_status_filter_translates(self) -> None:
-        """התבנית שנבנית דינמית ב-list_issuances."""
+        """The pattern built dynamically in list_issuances."""
         self.assertEqual(
             db.to_postgres_sql("SELECT * FROM issuances WHERE status IN (?,?,?) LIMIT ?"),
             "SELECT * FROM issuances WHERE status IN (%s,%s,%s) LIMIT %s",
@@ -41,9 +41,10 @@ class PlaceholderTranslation(unittest.TestCase):
 
 class NoPercentInSql(unittest.TestCase):
     """
-    בדיקת שמירה. התרגום ל-Postgres מסתמך על כך ש-`%` אינו מופיע ב-SQL,
-    כי psycopg מייחס לו משמעות. שאילתה עתידית עם LIKE '%...%' הייתה
-    נשברת בענן בלבד — ולכן נכשלת כאן, מוקדם ובבירור.
+    A guard test. The translation to Postgres relies on `%` never appearing in the
+    SQL, because psycopg gives it a meaning of its own. A future query with
+    LIKE '%...%' would break in the cloud alone — so it fails here instead,
+    early and plainly.
     """
 
     FILES = ("app/repo.py", "app/inventory.py")
@@ -54,8 +55,8 @@ class NoPercentInSql(unittest.TestCase):
         self.assertEqual(
             offenders,
             [],
-            "נמצא '%' בקובץ SQL. psycopg מפרש אותו כסימן פורמט, ולכן צריך "
-            "להכפילו ל-'%%' או להרחיב את to_postgres_sql. ראו app/db.py.",
+            "found '%' in the SQL. psycopg reads it as a format marker, so it has to "
+            "be doubled to '%%' or to_postgres_sql has to be extended. See app/db.py.",
         )
 
 
@@ -71,7 +72,7 @@ class SchemaGeneration(unittest.TestCase):
         self.assertNotIn("{pk}", sql)
 
     def test_identity_is_by_default_so_migration_can_keep_ids(self) -> None:
-        """ALWAYS היה חוסם הכנסת מזהה מפורש, וסקריפט ההעברה נשען על כך."""
+        """ALWAYS would block inserting an explicit id, and the migration script depends on it."""
         self.assertNotIn("GENERATED ALWAYS", db._PK_POSTGRES)
 
     def test_every_table_gets_a_primary_key(self) -> None:
@@ -84,7 +85,7 @@ class SchemaGeneration(unittest.TestCase):
 
 
 class EngineSelection(unittest.TestCase):
-    """הבחירה נעשית בזמן ריצה, ולכן אפשר להחליף מנוע בין בדיקות."""
+    """The choice is made at runtime, so the engine can be switched between tests."""
 
     def setUp(self) -> None:
         from app import config

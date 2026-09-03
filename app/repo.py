@@ -1,4 +1,4 @@
-"""גישה לנתונים. כל ה-SQL של המערכת יושב כאן ולא מפוזר במסכים."""
+"""Data access. All of the system SQL lives here rather than scattered across the screens."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -46,10 +46,10 @@ def get_item(item_id: int) -> Item | None:
 
 def find_item_by_sku(raw_sku: str) -> Item | None:
     """
-    שיוך לפי מק"ט בלבד — התאמה מדויקת אחרי נרמול, לא ניחוש.
+    Matching by SKU only — an exact match after normalization, never a guess.
 
-    הנרמול מופעל על שני הצדדים (בייבוא ובחיפוש), ולכן ' 11-11 ' במייל
-    ימצא את הפריט שנשמר כ-'1111'.
+    Normalization is applied on both sides (on import and on lookup), so ' 11-11 '
+    in an email finds the item stored as '1111'.
     """
     key = normalize_sku(raw_sku)
     if not key:
@@ -93,7 +93,7 @@ class IssuanceLine:
 
     @property
     def name_differs(self) -> bool:
-        """השם במייל שונה מהשם בקובץ — מוצג לתיעוד, לא כאזהרה."""
+        """The name in the email differs from the one in the file — shown for the record, not as a warning."""
         return bool(self.item_name) and self.item_name != self.raw_name
 
 
@@ -129,7 +129,7 @@ def _issuance_from_row(row: Row) -> Issuance:
 
 
 def _attach_lines(issuances: list[Issuance]) -> list[Issuance]:
-    """טוען את כל השורות בשאילתה אחת, לא אחת לכל הנפקה."""
+    """Loads all the lines in a single query, not one per issuance."""
     if not issuances:
         return issuances
     by_id = {i.id: i for i in issuances}
@@ -201,7 +201,8 @@ def insert_issuance(
     content_key: str | None = None,
 ) -> int:
     """
-    כותב הנפקה ואת שורותיה בטרנזקציה אחת — או שהכול נכנס, או שכלום לא.
+    Writes an issuance and its lines in a single transaction — either all of it
+    lands, or none of it does.
     """
     from app.db import transaction
 
@@ -227,7 +228,7 @@ def insert_issuance(
 
 
 def find_applied_with_content(content_key: str, exclude_id: int | None = None) -> Issuance | None:
-    """מחפש הנפקה שכבר נקלטה ותוכנה זהה — לזיהוי העברה חוזרת."""
+    """Looks for an already-applied issuance with identical content — to detect a re-forward."""
     if not content_key:
         return None
     sql = "SELECT * FROM issuances WHERE content_key = ? AND status = 'applied'"
@@ -244,7 +245,7 @@ def set_issuance_content_key(issuance_id: int, content_key: str | None) -> None:
 
 
 def replace_issuance_lines(issuance_id: int, lines: list[tuple[str, str, int, int | None]]) -> None:
-    """מחליף את שורות ההנפקה — לשימוש בניתוח מחדש של גוף המייל השמור."""
+    """Replaces the issuance lines — used when re-analysing the stored email body."""
     from app.db import transaction
 
     with transaction() as conn:

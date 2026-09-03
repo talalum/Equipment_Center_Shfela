@@ -1,21 +1,24 @@
-# כללי פירוק מייל ההנפקה.
+# Rules for parsing the issuance email.
 #
-# הכללים כאן ולא בקוד, כדי ששינוי קל בתבנית המייל לא ידרוש דיפלוי מחדש.
-# אחרי כל שינוי כאן — להריץ את הטסטים ולהדביק מייל אמיתי במסך /paste כדי לאמת.
+# The rules live here and not in the code, so that a small change to the email
+# format does not require a redeploy.
+# After every change here — run the tests and paste a real email on the /paste
+# screen to verify.
 
-# רשימת הפריטים נקראת בין שני העוגנים האלה. שניהם חייבים להופיע.
+# The item list is read between these two anchors. Both must be present.
 items_start: "המוצרים שהונפקו:"
 items_end: "שם המנפיק:"
 
-# כל שורה לא ריקה בין העוגנים חייבת להתאים לביטוי הזה, אחרת כל ההנפקה
-# עוברת לביקורת ולא נכנסת למלאי.
+# Every non-empty line between the anchors must match this expression, otherwise
+# the whole issuance goes to review and does not enter stock.
 item_line: '^(?P<name>.+?),\s*מק["״]?ט:\s*(?P<sku>[\w\-.]+)\s*[-–—]\s*כמות:\s*(?P<qty>\d+)\s*$'
 
-# שדות יחידים. נסרקים על כל גוף המייל.
+# Single fields. Scanned across the whole email body.
 issuer: '^\s*שם המנפיק:\s*(?P<issuer>.+?)\s*$'
 center: '^\s*מרכז ציוד:\s*(?P<center>.+?)\s*$'
 recipient: '^\s*שלום\s+(?P<recipient>.+?)\s*$'
 
-# מייל שמרכז הציוד שלו אינו זה — נשמר כ-ignored ולא נוגע במלאי.
-# להשארה ריקה כדי לקלוט מכל המרכזים.
+# An email whose equipment center is not this one is stored as ignored and does
+# not touch stock.
+# Leave empty to accept from every center.
 expected_center: "מרכז ציוד שפלה"

@@ -1,10 +1,10 @@
 """
-קליטת הנפקה למסד, וביצוע תנועות מלאי ידניות.
+Taking an issuance into the database, and recording manual stock movements.
 
-שני כללי הזהב:
-  1. דדופליקציה לפי Message-ID — מייל לא ייספר פעמיים לעולם.
-  2. קליטה היא הכל-או-כלום — הנפקה עם שורה בעייתית אחת ממתינה כולה לביקורת,
-     כי קליטה חלקית יוצרת מלאי שגוי בשקט.
+The two golden rules:
+  1. Deduplication by Message-ID — an email is never counted twice.
+  2. Intake is all-or-nothing — an issuance with a single problematic line waits
+     for review as a whole, because a partial intake silently produces wrong stock.
 """
 from __future__ import annotations
 
@@ -34,12 +34,14 @@ class IngestResult:
 
 def content_fingerprint(parsed: issuance_parser.ParsedIssuance) -> str:
     """
-    טביעת אצבע של *תוכן* ההנפקה: מקבל, מנפיק, מרכז, ורשימת מק"טים וכמויות.
+    A fingerprint of the issuance *content*: recipient, issuer, center, and the
+    list of SKUs with their quantities.
 
-    נחוצה כי Message-ID אינו מזהה את ההנפקה אלא את המייל: כל העברה חוזרת
-    של אותה הנפקה מקבלת מזהה חדש, ולכן הייתה נספרת שוב. התאריך *לא* נכלל
-    בכוונה — העברה מגיעה בתאריך אחר מהמקור, והכללתו הייתה מחטיאה בדיוק
-    את המקרה שאנחנו מנסים לתפוס.
+    Needed because a Message-ID identifies the email, not the issuance: every
+    re-forward of the same issuance gets a new id, and so used to be counted
+    again. The date is deliberately *not* included — a forward arrives with a
+    date different from the original, and including it would miss exactly the
+    case we are trying to catch.
     """
     items = "|".join(sorted(f"{line.normalized_sku}:{line.qty}" for line in parsed.lines))
     parts = [
@@ -61,9 +63,10 @@ def _duplicate_note(existing) -> str:
 
 def synthetic_message_id(raw_text: str) -> str:
     """
-    מזהה למייל שהודבק ידנית ואין לו Message-ID.
+    An id for an email pasted by hand, which has no Message-ID.
 
-    נגזר מתוכן המייל, ולכן הדבקה כפולה של אותו טקסט לא תיספר פעמיים.
+    Derived from the email content, so pasting the same text twice is not
+    counted twice.
     """
     digest = hashlib.sha256(raw_text.strip().encode("utf-8")).hexdigest()[:32]
     return f"paste-{digest}"
@@ -73,12 +76,15 @@ def _classify(
     parsed: issuance_parser.ParsedIssuance, fmt: issuance_parser.EmailFormat
 ) -> tuple[str, str | None, str, list[tuple[str, str, int, int | None]]]:
     """
-    מחליט מה לעשות עם הנפקה שנפרסה, ומשייך כל שורה לפריט לפי מק"ט.
+    Decides what to do with a parsed issuance, and matches each line to an item
+    by SKU.
 
-    משותף לקליטה ראשונה ולניתוח מחדש, כדי ששני המסלולים לא יתפצלו לעולם.
+    Shared by the first intake and by re-analysis, so that the two paths never
+    diverge.
 
-    סדר ההחלטה חשוב: בעבר בדיקת המרכז רצה ראשונה, ולכן מייל שלא נפרס כלל
-    קיבל "מרכז לא ידוע" וסומן ignored — כלומר נעלם בשקט עם הודעה מטעה.
+    The order of the decisions matters: the center check used to run first, so
+    an email that had not parsed at all was labelled "unknown center" and marked
+    ignored — that is, it vanished silently behind a misleading message.
     """
     notes: list[str] = list(parsed.errors)
     lines: list[tuple[str, str, int, int | None]] = []
@@ -121,11 +127,13 @@ def _classify(
 
 def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
     """
-    מנתח מחדש הנפקה שכבר במסד, לפי גוף המייל המקורי שנשמר.
+    Re-analyses an issuance already in the database, from the original email
+    body that was stored with it.
 
-    נחוץ אחרי שיפור בפרסר: הדדופליקציה לפי Message-ID מונעת משיכה חוזרת
-    של אותו מייל, ולכן בלי הפעולה הזו תיקון בקוד לא היה משפיע לעולם על
-    מיילים שכבר נקלטו — והם היו נשארים תקועים עם השגיאה הישנה.
+    Needed after an improvement to the parser: deduplication by Message-ID
+    prevents the same email from being fetched again, so without this action a
+    fix in the code would never reach emails already taken in — they would stay
+    stuck with the old error.
     """
     issuance = repo.get_issuance(issuance_id)
     if issuance is None:
@@ -160,10 +168,10 @@ def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
 
 def reanalyse_unapplied() -> dict[str, int]:
     """
-    מנתח מחדש את כל ההנפקות שלא נקלטו למלאי.
+    Re-analyses every issuance that has not been applied to stock.
 
-    לא נוגע בהנפקות שכבר נקלטו — הן תקינות, וניתוח מחדש שלהן היה עלול
-    לשנות מלאי קיים בלי שביקשו זאת.
+    Issuances already applied are left alone — they are fine, and re-analysing
+    them could change existing stock without anyone asking for it.
     """
     counts = {"total": 0, "applied": 0, "needs_review": 0, "ignored": 0}
     for issuance in repo.list_issuances((NEEDS_REVIEW, IGNORED), limit=1000):
@@ -180,7 +188,8 @@ def ingest_issuance(
     email_date: datetime | None = None,
     source: str = "email",
 ) -> IngestResult:
-    """קולט מייל אחד. מחזיר תוצאה גם כשההנפקה לא נקלטה — הסטטוס מסביר למה."""
+    """Takes in a single email. Returns a result even when the issuance was not
+    applied — the status explains why."""
     existing = repo.find_issuance_by_message_id(message_id)
     if existing is not None:
         return IngestResult(
@@ -195,9 +204,10 @@ def ingest_issuance(
 
     status, note, message, lines = _classify(parsed, fmt)
 
-    # הנפקה שנראית זהה לאחת שכבר נקלטה לא נקלטת לבד ולא נזרקת לבד —
-    # היא עוברת להכרעה ידנית, כי אי אפשר לדעת מהמייל אם זו העברה חוזרת
-    # או באמת הנפקה שנייה של אותו ציוד לאותו אדם.
+    # An issuance that looks identical to one already applied is neither applied
+    # nor discarded on its own — it goes to a manual decision, because the email
+    # cannot tell us whether this is a re-forward or genuinely a second issuance
+    # of the same equipment to the same person.
     content_key = content_fingerprint(parsed) if parsed.lines else None
     if status == APPLIED:
         twin = repo.find_applied_with_content(content_key)
@@ -224,7 +234,7 @@ def ingest_issuance(
 
 
 def approve_issuance(issuance_id: int) -> tuple[bool, str]:
-    """מאשר הנפקה שהמתינה לביקורת. נכשל אם נשארה שורה בלי שיוך."""
+    """Approves an issuance that was waiting for review. Fails if a line is still unmatched."""
     issuance = repo.get_issuance(issuance_id)
     if issuance is None:
         return False, "ההנפקה לא נמצאה."
@@ -245,8 +255,9 @@ def ignore_issuance(issuance_id: int, note: str = "סומנה ידנית להת�
 
 def record_edit(item: repo.Item, actual_qty: int, reason: str) -> int | None:
     """
-    עריכה: המשתמשת מקלידה את הכמות שספרה בפועל, לא הפרש.
-    ההפרש מחושב כאן ונשמר כתנועה. delta אפס לא יוצר רשומה מיותרת.
+    An edit: the user types the quantity actually counted, not a difference.
+    The difference is computed here and stored as a movement. A zero delta
+    creates no needless record.
     """
     current = inventory.status_for_item(item).remaining
     delta = actual_qty - current
@@ -257,7 +268,7 @@ def record_edit(item: repo.Item, actual_qty: int, reason: str) -> int | None:
 
 
 def record_reset(item: repo.Item, reason: str = "איפוס לתקן") -> int | None:
-    """איפוס לתקן: מחזיר את הפריט בדיוק לתקן. אידמפוטנטי."""
+    """Reset to standard: brings the item back to exactly its standard quantity. Idempotent."""
     current = inventory.status_for_item(item).remaining
     delta = item.standard_qty - current
     if delta == 0:
@@ -267,7 +278,7 @@ def record_reset(item: repo.Item, reason: str = "איפוס לתקן") -> int | 
 
 
 def reset_all_shortages() -> int:
-    """איפוס לתקן לכל הפריטים שבחוסר. מחזיר כמה פריטים שונו."""
+    """Reset to standard for every item in shortage. Returns how many items changed."""
     pending = [
         (s.item.id, s.item.standard_qty - s.remaining, "איפוס לתקן (גורף)", KIND_RESET)
         for s in inventory.status_for_all(repo.list_items(include_inactive=False))
