@@ -162,6 +162,22 @@ def _split_statements(script: str) -> list[str]:
     return [part.strip() for part in script.split(";") if part.strip()]
 
 
+def describe_backend() -> str:
+    """
+    Which database is actually in use, for the startup log. Never includes the
+    password.
+
+    Worth logging because the fallback is silent: a deployment that is missing
+    DATABASE_URL quietly starts on an empty SQLite file inside the container,
+    serves an empty warehouse, and looks like data loss rather than like a
+    configuration mistake.
+    """
+    if not is_postgres():
+        return f"SQLite file at {config.DB_PATH}"
+    host = config.DATABASE_URL.split("@")[-1].split("/")[0]
+    return f"PostgreSQL at {host}"
+
+
 # ------------------------------------------------------------------ Connections
 
 
