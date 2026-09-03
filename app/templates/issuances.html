@@ -4,6 +4,15 @@
 {% block content %}
 <h1>יומן הנפקות</h1>
 
+<form method="post" action="/reanalyse-all" class="bulk"
+      data-confirm="לנתח מחדש את כל ההנפקות שלא נקלטו, לפי גוף המייל השמור?&#10;&#10;הנפקות שכבר נקלטו לא ייגעו.">
+  <button class="btn ghost">⟳ נתח מחדש את כל מה שלא נקלט</button>
+</form>
+<p class="hint">
+  שימושי אחרי עדכון של המערכת: מייל שכבר נקלט לא נמשך שוב מהתיבה, ולכן שיפור
+  בזיהוי לא משפיע עליו עד שמנתחים אותו מחדש מגוף המייל השמור.
+</p>
+
 {% if not issuances %}
   <p class="empty">עדיין לא נקלטו הנפקות.</p>
 {% else %}
@@ -41,6 +50,14 @@
       <summary>הצג את המייל המקורי</summary>
       <pre>{{ iss.raw_text }}</pre>
     </details>
+
+    {% if iss.status == 'ignored' %}
+    <footer>
+      <form method="post" action="/issuances/{{ iss.id }}/reanalyse" class="inline">
+        <button class="btn ghost">⟳ נתח מחדש</button>
+      </form>
+    </footer>
+    {% endif %}
   </details>
   {% endfor %}
 {% endif %}

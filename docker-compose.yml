@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     volumes:
-      # הנתונים שורדים גם כשהקונטיינר נבנה מחדש.
+      # The data survives even when the container is rebuilt.
       - warehouse-data:/data
     restart: unless-stopped
 

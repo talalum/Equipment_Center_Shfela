@@ -1,7 +1,8 @@
 """
-שליפת מיילים מחשבון ה-Gmail הייעודי דרך IMAP.
+Fetching emails from the dedicated Gmail account over IMAP.
 
-אין כאן שום נגיעה בתשתית ארגונית — רק חשבון Gmail ו-App Password.
+Nothing here touches any corporate infrastructure — only a Gmail account and
+an App Password.
 """
 from __future__ import annotations
 
@@ -10,7 +11,8 @@ import imaplib
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
@@ -32,7 +34,7 @@ class FetchedEmail:
 
 
 class _HTMLToText(HTMLParser):
-    """המרת HTML לטקסט — כשאין חלק text/plain במייל."""
+    """HTML to text conversion — for when the email has no text/plain part."""
 
     _BLOCK_TAGS = {"p", "div", "br", "tr", "li", "table", "h1", "h2", "h3", "h4"}
 
@@ -83,8 +85,8 @@ def _decode_part(part: Message) -> str:
 
 def extract_body(msg: Message) -> str:
     """
-    מעדיף text/plain. אם אין — ממיר את ה-HTML לטקסט.
-    מדלג על קבצים מצורפים.
+    Prefers text/plain. Failing that, converts the HTML to text.
+    Attachments are skipped.
     """
     plain: list[str] = []
     html: list[str] = []
@@ -115,7 +117,7 @@ def _decode_header_value(value: str | None) -> str:
         return ""
     try:
         return str(make_header(decode_header(value)))
-    except Exception:  # כותרת פגומה לא אמורה להפיל שליפה שלמה
+    except Exception:  # a malformed header must not bring down a whole fetch
         return value
 
 
@@ -128,44 +130,76 @@ def _message_date(msg: Message) -> datetime:
                 parsed = parsed.replace(tzinfo=timezone.utc)
             return parsed
         except (TypeError, ValueError):
-            log.warning("תאריך לא תקין בכותרת המייל: %r", raw)
+            log.warning("Invalid date in the email header: %r", raw)
     return datetime.now(timezone.utc)
 
 
-def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]:
-    """
-    מושך מיילים שלא נקראו. מסמן כנקראים רק אחרי קריאה מוצלחת.
+_MESSAGE_ID_RE = re.compile(rb"^message-id:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
-    הדדופליקציה האמיתית היא לפי Message-ID במסד, ולכן גם אם דגל ה-Seen
-    יאבד — המלאי לא ייספר פעמיים.
+
+def _header_message_id(raw: bytes) -> str:
+    match = _MESSAGE_ID_RE.search(raw)
+    return _decode_header_value(match.group(1).decode("utf-8", "replace")).strip() if match else ""
+
+
+def fetch_recent(
+    is_known: Callable[[str], bool] | None = None,
+    days: int | None = None,
+    limit: int = 500,
+) -> list[FetchedEmail]:
+    """
+    Fetches emails from the recent period, independently of the "seen" flag.
+
+    Why not UNSEEN: if someone opens the mailbox and glances at an issuance email
+    while the system is down, the email is marked as read and would never be
+    collected — an issuance vanishing silently. Instead a fixed time window is
+    scanned, and the protection against double counting rests on the Message-ID
+    already being in the database.
+
+    is_known takes a Message-ID and returns whether it has already been taken in.
+    Bodies are fetched only for new emails, which keeps a repeat scan cheap.
     """
     if not config.imap_configured():
         raise RuntimeError("חסרים פרטי חיבור לתיבה (IMAP_USER / IMAP_PASSWORD).")
+
+    lookback = days if days is not None else config.LOOKBACK_DAYS
+    since = (datetime.now(timezone.utc) - timedelta(days=lookback)).strftime("%d-%b-%Y")
 
     results: list[FetchedEmail] = []
     conn = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
     try:
         conn.login(config.IMAP_USER, config.IMAP_PASSWORD)
         conn.select(config.IMAP_FOLDER)
-        status, data = conn.search(None, "UNSEEN")
+        status, data = conn.search(None, "SINCE", since)
         if status != "OK":
             raise RuntimeError(f"חיפוש בתיבה נכשל: {status}")
 
-        uids = data[0].split()[:limit]
+        # Newest first, so that even a busy mailbox is caught up on what matters first.
+        uids = list(reversed(data[0].split()))[:limit]
         for uid in uids:
-            # BODY.PEEK כדי שהקריאה עצמה לא תסמן כנקרא — אנחנו מחליטים מתי.
+            # BODY.PEEK only — our reading never changes the state of the mailbox.
+            status, head = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if status != "OK" or not head or not isinstance(head[0], tuple):
+                log.warning("Could not read the headers of email %r", uid)
+                continue
+
+            message_id = _header_message_id(head[0][1])
+            if message_id and is_known and is_known(message_id):
+                continue  # already taken in — no need to fetch the body
+
             status, payload = conn.fetch(uid, "(BODY.PEEK[])")
             if status != "OK" or not payload or not isinstance(payload[0], tuple):
-                log.warning("לא ניתן לקרוא את המייל %r", uid)
+                log.warning("Could not read email %r", uid)
                 continue
 
             msg = email.message_from_bytes(payload[0][1])
             body = extract_body(msg)
-            message_id = _decode_header_value(msg.get("Message-ID")).strip()
             if not message_id:
-                # מייל בלי Message-ID — נגזור מזהה יציב מהתוכן, כדי שהדדופליקציה
-                # תמשיך לעבוד גם עליו.
+                # An email with no Message-ID — a stable id derived from the content,
+                # so that deduplication keeps working for it too.
                 message_id = synthetic_message_id(body)
+                if is_known and is_known(message_id):
+                    continue
 
             results.append(
                 FetchedEmail(
@@ -175,8 +209,6 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
                     body=body,
                 )
             )
-            if mark_seen:
-                conn.store(uid, "+FLAGS", "\\Seen")
     finally:
         try:
             conn.close()
@@ -184,4 +216,5 @@ def fetch_unseen(mark_seen: bool = True, limit: int = 100) -> list[FetchedEmail]
             pass
         conn.logout()
 
+    results.reverse()  # so intake happens in chronological order
     return results

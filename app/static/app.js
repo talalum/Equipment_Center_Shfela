@@ -1,8 +1,8 @@
-/* אישורים לפעולות ומודאל העריכה. */
+/* Action confirmations and the edit modal. */
 (function () {
   "use strict";
 
-  // כל טופס עם data-confirm מבקש אישור לפני שליחה.
+  // Every form with data-confirm asks for confirmation before submitting.
   document.addEventListener("submit", function (event) {
     var form = event.target;
     var message = form.dataset ? form.dataset.confirm : null;

@@ -1,4 +1,4 @@
-"""מסכי האתר — מרכז ציוד שפלה."""
+"""The site screens — Equipment Center Shfela."""
 from __future__ import annotations
 
 import logging
@@ -9,13 +9,36 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app import auth, config, importer, ingest, inventory, mail_sync, repo, scheduler
+from app import auth, config, db, importer, ingest, inventory, mail_sync, repo, scheduler
 from app.db import init_db
 from app.parsing.normalize import normalize_sku
 from app.web import Request, Response, Router, make_wsgi_app, safe_redirect_target
 
 log = logging.getLogger(__name__)
-LOCAL_TZ = ZoneInfo(config.TZ_NAME)
+
+
+def _local_timezone(name: str):
+    """
+    The timezone used for display.
+
+    Windows has no timezone database in the operating system, so ZoneInfo fails
+    there unless the tzdata package is installed. In that case we fall back to
+    the machine's own clock — better to show a correct time from the system than
+    to bring the server down over a date display.
+    """
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        fallback = datetime.now().astimezone().tzinfo
+        log.warning(
+            'Timezone "%s" not found (common on Windows without the tzdata package) — '
+            "showing the machine clock instead. To install: pip install tzdata",
+            name,
+        )
+        return fallback
+
+
+LOCAL_TZ = _local_timezone(config.TZ_NAME)
 TEMPLATES_DIR = config.BASE_DIR / "app" / "templates"
 STATIC_DIR = config.BASE_DIR / "app" / "static"
 
@@ -62,7 +85,8 @@ def back(request: Request, fallback: str = "/") -> Response:
 
 
 def authenticated(request: Request) -> bool:
-    # אם לא הוגדרה סיסמה (פיתוח מקומי) אין חסימה, אבל אזהרה מוצגת בכל מסך.
+    # With no password configured (local development) nothing is blocked, but a
+    # warning is shown on every screen.
     return not auth.auth_configured() or bool(request.session.get("user"))
 
 
@@ -312,6 +336,34 @@ def review_create_item(request: Request, issuance_id: int, line_id: int) -> Resp
     return back(request, "/review")
 
 
+@router.post("/issuances/{issuance_id}/reanalyse")
+def issuance_reanalyse(request: Request, issuance_id: int) -> Response:
+    if (redirect := login_required(request)) is not None:
+        return redirect
+    changed, message = ingest.reanalyse_issuance(issuance_id)
+    flash(request, message, "success" if changed else "info")
+    return back(request, "/issuances")
+
+
+@router.post("/reanalyse-all")
+def reanalyse_all(request: Request) -> Response:
+    if (redirect := login_required(request)) is not None:
+        return redirect
+    counts = ingest.reanalyse_unapplied()
+    if not counts["total"]:
+        flash(request, "אין הנפקות שממתינות לניתוח מחדש.")
+    else:
+        flash(
+            request,
+            f"נותחו מחדש {counts['total']} הנפקות — "
+            f"{counts['applied']} נקלטו למלאי, "
+            f"{counts['needs_review']} ממתינות לאישור, "
+            f"{counts['ignored']} לא רלוונטיות.",
+            "success" if counts["applied"] else "info",
+        )
+    return back(request, "/issuances")
+
+
 @router.post("/review/{issuance_id}/approve")
 def review_approve(request: Request, issuance_id: int) -> Response:
     if (redirect := login_required(request)) is not None:
@@ -405,7 +457,7 @@ def healthz(_: Request) -> Response:
 
 @router.get("/static/{name}")
 def static_file(_: Request, name: str) -> Response:
-    # שם קובץ בלבד — הנתיב לא יכול לצאת מהתיקייה.
+    # Filename only — the path cannot escape the directory.
     candidate = (STATIC_DIR / Path(name).name).resolve()
     if not candidate.is_file() or STATIC_DIR.resolve() not in candidate.parents:
         return Response.html("<h1>404</h1>", status=404)
@@ -421,14 +473,18 @@ def static_file(_: Request, name: str) -> Response:
 
 
 def bootstrap() -> None:
-    """הכנת המערכת לעלייה: סכימה, טעינה ראשונית ותזמון."""
+    """Preparing the system for start-up: schema, initial load, and scheduling."""
     init_db()
     if not repo.list_items():
         csv_path = config.DEFAULT_IMPORT_CSV
         if csv_path.exists():
             result = importer.import_items(csv_path.read_bytes(), csv_path.name)
-            log.info("ייבוא ראשוני מקובץ התקן: %s", result.summary())
+            log.info("Initial import from the standard-quantity file: %s", result.summary())
     scheduler.start()
 
 
-application = make_wsgi_app(router)
+# The database connection is closed at the end of every request. On SQLite that
+# is cheap; on Postgres it is essential: the server opens a thread per request
+# and each thread has its own connection — without an orderly release, the
+# provider's connection quota runs out.
+application = make_wsgi_app(router, after_request=db.close_thread_connection)

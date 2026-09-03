@@ -1,9 +1,10 @@
 """
-ייבוא קובץ התקן.
+Import of the standard-quantity file.
 
-מהקובץ נלקחות שלוש עמודות בלבד: מק"ט, שם פריט, תקן.
-העמודות 'מלאי עדכני', 'כמות חוסר', 'כמות להזמנה', 'הסבר' הן פלט של דוח קיים
-ומתעלמות במכוון — הקובץ הוא מקור לרשימת הפריטים ולתקן, לא למצב המלאי.
+Only three columns are taken from the file: SKU, item name, standard quantity.
+The columns 'current stock', 'shortage', 'quantity to order' and 'notes' are the
+output of an existing report and are ignored on purpose — the file is a source
+for the item list and the standard quantities, not for the stock status.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ COL_NAME = "שם פריט"
 COL_STANDARD = "תקן"
 REQUIRED_COLUMNS = (COL_SKU, COL_NAME, COL_STANDARD)
 
-# נקראות ומושלכות במכוון — מתועד כאן כדי שלא ייכנסו בטעות בעתיד.
+# Read and discarded on purpose — documented here so they are not picked up by
+# mistake later on.
 IGNORED_COLUMNS = ("מלאי עדכני", "כמות חוסר", "כמות להזמנה", "הסבר")
 
 
@@ -43,20 +45,20 @@ class ImportResult:
 
 
 def _decode(content: bytes | str) -> str:
-    # utf-8-sig מסיר את ה-BOM שיש בקובץ שיוצא מהדוח.
+    # utf-8-sig strips the BOM present in the file exported from the report.
     if isinstance(content, bytes):
         try:
             return content.decode("utf-8-sig")
         except UnicodeDecodeError:
-            # אקסל בעברית מייצא לפעמים ב-cp1255.
+            # Hebrew Excel sometimes exports as cp1255.
             return content.decode("cp1255", errors="replace")
     return content.lstrip("﻿")
 
 
 def import_items(content: bytes | str, filename: str = "import.csv") -> ImportResult:
     """
-    upsert לפי מק"ט. ייבוא חוזר מעדכן תקן ושמות בלי לאבד היסטוריית הנפקות,
-    כי המק"ט הוא מפתח יציב.
+    Upsert by SKU. A repeat import updates standard quantities and names without
+    losing the issuance history, because the SKU is a stable key.
     """
     result = ImportResult()
     rows = list(csv.DictReader(io.StringIO(_decode(content))))
@@ -78,7 +80,7 @@ def import_items(content: bytes | str, filename: str = "import.csv") -> ImportRe
     to_create: list[tuple[str, str, int]] = []
     to_update: list[tuple[str, int, int]] = []
 
-    for line_no, row in enumerate(rows, start=2):  # שורה 1 היא הכותרות
+    for line_no, row in enumerate(rows, start=2):  # line 1 is the header row
         sku = normalize_sku(row.get(COL_SKU))
         name = clean_text(row.get(COL_NAME))
         raw_standard = clean_text(row.get(COL_STANDARD))
@@ -102,7 +104,8 @@ def import_items(content: bytes | str, filename: str = "import.csv") -> ImportRe
             result.problems.append(f'שורה {line_no}: תקן שלילי ({standard}, מק"ט {sku}) — נדחתה.')
             continue
         if sku in seen:
-            # לא דורסים בשקט: מק"ט כפול בקובץ הוא טעות שצריך לראות.
+            # Nothing is overwritten silently: a duplicate SKU in the file is a
+            # mistake that has to be seen.
             result.rejected += 1
             result.problems.append(f'שורה {line_no}: מק"ט {sku} מופיע כבר בשורה {seen[sku]} — נדחתה.')
             continue

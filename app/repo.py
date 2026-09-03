@@ -1,11 +1,11 @@
-"""גישה לנתונים. כל ה-SQL של המערכת יושב כאן ולא מפוזר במסכים."""
+"""Data access. All of the system SQL lives here rather than scattered across the screens."""
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from app.db import connect, parse_dt, utcnow
+from app.db import Row, connect, insert_returning_id, parse_dt, utcnow
 from app.parsing.normalize import normalize_sku
 
 
@@ -21,7 +21,7 @@ class Item:
     active: bool
 
     @staticmethod
-    def from_row(row: sqlite3.Row) -> "Item":
+    def from_row(row: Row) -> "Item":
         return Item(
             id=row["id"],
             sku=row["sku"],
@@ -46,10 +46,10 @@ def get_item(item_id: int) -> Item | None:
 
 def find_item_by_sku(raw_sku: str) -> Item | None:
     """
-    שיוך לפי מק"ט בלבד — התאמה מדויקת אחרי נרמול, לא ניחוש.
+    Matching by SKU only — an exact match after normalization, never a guess.
 
-    הנרמול מופעל על שני הצדדים (בייבוא ובחיפוש), ולכן ' 11-11 ' במייל
-    ימצא את הפריט שנשמר כ-'1111'.
+    Normalization is applied on both sides (on import and on lookup), so ' 11-11 '
+    in an email finds the item stored as '1111'.
     """
     key = normalize_sku(raw_sku)
     if not key:
@@ -58,13 +58,13 @@ def find_item_by_sku(raw_sku: str) -> Item | None:
     return Item.from_row(row) if row else None
 
 
-def create_item(sku: str, name: str, standard_qty: int, conn: sqlite3.Connection | None = None) -> int:
+def create_item(sku: str, name: str, standard_qty: int, conn: Any | None = None) -> int:
     conn = conn or connect()
-    cur = conn.execute(
+    return insert_returning_id(
+        conn,
         "INSERT INTO items (sku, name, standard_qty, active, created_at) VALUES (?, ?, ?, 1, ?)",
         (normalize_sku(sku), name, max(0, standard_qty), utcnow()),
     )
-    return int(cur.lastrowid)
 
 
 def update_item(item_id: int, name: str, standard_qty: int, active: bool) -> None:
@@ -93,7 +93,7 @@ class IssuanceLine:
 
     @property
     def name_differs(self) -> bool:
-        """השם במייל שונה מהשם בקובץ — מוצג לתיעוד, לא כאזהרה."""
+        """The name in the email differs from the one in the file — shown for the record, not as a warning."""
         return bool(self.item_name) and self.item_name != self.raw_name
 
 
@@ -112,7 +112,7 @@ class Issuance:
     lines: list[IssuanceLine]
 
 
-def _issuance_from_row(row: sqlite3.Row) -> Issuance:
+def _issuance_from_row(row: Row) -> Issuance:
     return Issuance(
         id=row["id"],
         message_id=row["message_id"],
@@ -129,7 +129,7 @@ def _issuance_from_row(row: sqlite3.Row) -> Issuance:
 
 
 def _attach_lines(issuances: list[Issuance]) -> list[Issuance]:
-    """טוען את כל השורות בשאילתה אחת, לא אחת לכל הנפקה."""
+    """Loads all the lines in a single query, not one per issuance."""
     if not issuances:
         return issuances
     by_id = {i.id: i for i in issuances}
@@ -198,31 +198,80 @@ def insert_issuance(
     source: str,
     review_note: str | None,
     lines: list[tuple[str, str, int, int | None]],
+    content_key: str | None = None,
 ) -> int:
     """
-    כותב הנפקה ואת שורותיה בטרנזקציה אחת — או שהכול נכנס, או שכלום לא.
+    Writes an issuance and its lines in a single transaction — either all of it
+    lands, or none of it does.
     """
     from app.db import transaction
 
     with transaction() as conn:
-        cur = conn.execute(
+        issuance_id = insert_returning_id(
+            conn,
             """
             INSERT INTO issuances
                 (message_id, email_date, recipient, issuer, center, raw_text,
-                 status, source, review_note, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 status, source, review_note, content_key, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, email_date, recipient, issuer, center, raw_text,
-                status, source, review_note, utcnow(),
+                status, source, review_note, content_key, utcnow(),
             ),
         )
-        issuance_id = int(cur.lastrowid)
         conn.executemany(
             "INSERT INTO issuance_lines (issuance_id, raw_sku, raw_name, qty, item_id) VALUES (?, ?, ?, ?, ?)",
             [(issuance_id, sku, name, qty, item_id) for sku, name, qty, item_id in lines],
         )
     return issuance_id
+
+
+def find_applied_with_content(content_key: str, exclude_id: int | None = None) -> Issuance | None:
+    """Looks for an already-applied issuance with identical content — to detect a re-forward."""
+    if not content_key:
+        return None
+    sql = "SELECT * FROM issuances WHERE content_key = ? AND status = 'applied'"
+    params: list = [content_key]
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    row = connect().execute(sql + " ORDER BY id LIMIT 1", params).fetchone()
+    return _issuance_from_row(row) if row else None
+
+
+def set_issuance_content_key(issuance_id: int, content_key: str | None) -> None:
+    connect().execute("UPDATE issuances SET content_key = ? WHERE id = ?", (content_key, issuance_id))
+
+
+def replace_issuance_lines(issuance_id: int, lines: list[tuple[str, str, int, int | None]]) -> None:
+    """Replaces the issuance lines — used when re-analysing the stored email body."""
+    from app.db import transaction
+
+    with transaction() as conn:
+        conn.execute("DELETE FROM issuance_lines WHERE issuance_id = ?", (issuance_id,))
+        conn.executemany(
+            "INSERT INTO issuance_lines (issuance_id, raw_sku, raw_name, qty, item_id) VALUES (?, ?, ?, ?, ?)",
+            [(issuance_id, sku, name, qty, item_id) for sku, name, qty, item_id in lines],
+        )
+
+
+def update_issuance_details(
+    issuance_id: int,
+    recipient: str | None,
+    issuer: str | None,
+    center: str | None,
+    status: str,
+    review_note: str | None,
+) -> None:
+    connect().execute(
+        """
+        UPDATE issuances
+        SET recipient = ?, issuer = ?, center = ?, status = ?, review_note = ?
+        WHERE id = ?
+        """,
+        (recipient, issuer, center, status, review_note, issuance_id),
+    )
 
 
 def set_issuance_status(issuance_id: int, status: str, review_note: str | None) -> None:
@@ -236,7 +285,7 @@ def assign_line_item(line_id: int, item_id: int) -> None:
     connect().execute("UPDATE issuance_lines SET item_id = ? WHERE id = ?", (item_id, line_id))
 
 
-def get_line(line_id: int) -> sqlite3.Row | None:
+def get_line(line_id: int) -> Row | None:
     return connect().execute("SELECT * FROM issuance_lines WHERE id = ?", (line_id,)).fetchone()
 
 
@@ -256,11 +305,11 @@ class Adjustment:
 
 
 def add_adjustment(item_id: int, delta: int, reason: str, kind: str) -> int:
-    cur = connect().execute(
+    return insert_returning_id(
+        connect(),
         "INSERT INTO adjustments (item_id, delta, reason, kind, created_at) VALUES (?, ?, ?, ?, ?)",
         (item_id, delta, reason, kind, utcnow()),
     )
-    return int(cur.lastrowid)
 
 
 def add_adjustments(rows: list[tuple[int, int, str, str]]) -> int:

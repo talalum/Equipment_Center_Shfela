@@ -1,4 +1,4 @@
-"""חישוב המלאי, שני כפתורי התנועה, והדדופליקציה."""
+"""The stock calculation, the two movement buttons, and deduplication."""
 from __future__ import annotations
 
 import unittest
@@ -12,7 +12,7 @@ from app.parsing.normalize import normalize_sku
 class NormalizeSku(unittest.TestCase):
     def test_variants_collapse_to_one_key(self) -> None:
         for variant in ("1111", " 1111 ", "11-11", "11.11", "١١١١", "۱۱۱۱"):
-            self.assertEqual(normalize_sku(variant), "1111", f"נכשל על {variant!r}")
+            self.assertEqual(normalize_sku(variant), "1111", f"failed on {variant!r}")
 
     def test_empty_values(self) -> None:
         self.assertEqual(normalize_sku(""), "")
@@ -26,13 +26,13 @@ class Matching(DBTestCase):
 
     def test_sku_variants_find_the_same_item(self) -> None:
         for variant in ("1111", " 1111 ", "11-11"):
-            self.assertIsNotNone(repo.find_item_by_sku(variant), f"נכשל על {variant!r}")
+            self.assertIsNotNone(repo.find_item_by_sku(variant), f"failed on {variant!r}")
 
     def test_unknown_sku_returns_none(self) -> None:
         self.assertIsNone(repo.find_item_by_sku("9999"))
 
     def test_matching_ignores_item_names(self) -> None:
-        """מק\"ט 1102 נקרא 'פלסטרים' במייל ו'פלסטר' בקובץ — והשיוך עדיין נכון."""
+        """SKU 1102 is called 'פלסטרים' in the email and 'פלסטר' in the file — and the match still holds."""
         self.assertEqual(repo.find_item_by_sku("1102").name, "פלסטר")
 
 
@@ -40,7 +40,7 @@ class InventoryMath(DBTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.load_real_items()
-        self.item = repo.find_item_by_sku("1111")  # תקן 44
+        self.item = repo.find_item_by_sku("1111")  # standard quantity 44
 
     def status(self) -> inventory.ItemStatus:
         return inventory.status_for_item(repo.get_item(self.item.id))
@@ -63,10 +63,10 @@ class InventoryMath(DBTestCase):
     def test_reset_is_idempotent(self) -> None:
         ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
         ingest.record_reset(self.item)
-        self.assertIsNone(ingest.record_reset(self.item), "איפוס שני לא אמור לרשום תנועה")
+        self.assertIsNone(ingest.record_reset(self.item), "a second reset must not record a movement")
 
     def test_edit_takes_the_counted_quantity_not_a_delta(self) -> None:
-        ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")  # נשאר 42
+        ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")  # 42 remaining
         self.assertEqual(ingest.record_edit(self.item, 40, "ספירת מלאי"), -2)
         s = self.status()
         self.assertEqual((s.remaining, s.shortage), (40, 4))
@@ -119,7 +119,7 @@ class AppliedEmailEffects(DBTestCase):
         ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
         again = ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
         self.assertTrue(again.duplicate)
-        self.assertEqual(self.shortages()["1111"], 2, "מייל כפול לא אמור להיספר פעמיים")
+        self.assertEqual(self.shortages()["1111"], 2, "a duplicate email must not be counted twice")
 
     def test_pasting_identical_text_twice_is_deduplicated(self) -> None:
         mid = ingest.synthetic_message_id(SAMPLE_EMAIL)
@@ -137,7 +137,7 @@ class AppliedEmailEffects(DBTestCase):
         broken = SAMPLE_EMAIL.replace("פלסטרים, מקט: 1102 - כמות: 1", "מזרן ואקום, מקט: 9999 - כמות: 1")
         result = ingest.ingest_issuance(broken, "m-unknown", source="paste")
         self.assertEqual(result.status, ingest.NEEDS_REVIEW)
-        self.assertEqual(self.shortages(), {}, "גם השורות התקינות לא נכנסות עד לאישור")
+        self.assertEqual(self.shortages(), {}, "even the valid lines stay out until approval")
 
     def test_unparsable_line_holds_the_whole_issuance(self) -> None:
         broken = SAMPLE_EMAIL.replace("פלסטרים, מקט: 1102 - כמות: 1", "טקסט חופשי")
@@ -183,7 +183,7 @@ class BulkReset(DBTestCase):
         self.assertEqual(ingest.reset_all_shortages(), 7)
         remaining = [s for s in inventory.status_for_all(repo.list_items()) if s.in_shortage]
         self.assertEqual(remaining, [])
-        self.assertEqual(len(repo.list_adjustments()), 7, "רק 7 הפריטים בחוסר נגעו")
+        self.assertEqual(len(repo.list_adjustments()), 7, "only the 7 items in shortage were touched")
 
     def test_no_shortages_means_no_movements(self) -> None:
         ingest.reset_all_shortages()

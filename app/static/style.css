@@ -1,4 +1,4 @@
-/* מרכז ציוד שפלה — עיצוב RTL לכלי פנימי. */
+/* Equipment Center Shfela — an RTL design for an internal tool. */
 
 :root {
   --bg: #f4f6f8;
@@ -25,7 +25,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   font: 15px/1.55 "Segoe UI", Arial, "Noto Sans Hebrew", sans-serif;
-  /* הדף לעולם לא נגלל לרוחב — במיוחד חשוב ב-RTL בנייד. */
+  /* The page never scrolls sideways — especially important for RTL on mobile. */
   overflow-x: hidden;
 }
 
@@ -92,7 +92,8 @@ code { background: var(--bg); padding: .1rem .3rem; border-radius: 4px; font-siz
   align-items: stretch;
   margin-bottom: 1rem;
 }
-/* בלי זה פריטי flex לא מתכווצים מתחת לתוכן שלהם והדף גולש לרוחב במסך צר. */
+/* Without this, flex items do not shrink below their content and the page
+   overflows sideways on a narrow screen. */
 .summary > *, .toolbar > *, .bulk > * { min-width: 0; }
 .stat {
   background: var(--surface);
@@ -183,7 +184,7 @@ label { display: block; font-size: .85rem; color: var(--ink-soft); margin-top: .
 .grid thead th { background: #eef2f6; font-size: .85rem; white-space: nowrap; }
 .grid tbody tr:last-child td { border-bottom: 0; }
 .grid tbody tr:hover { background: #f8fafc; }
-/* מספרים מיושרים לימין כדי שאפשר יהיה להשוות עמודות במבט */
+/* Numbers are right-aligned so columns can be compared at a glance */
 .num-col { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .act-col { text-align: end; white-space: nowrap; }
 .grid tr.short { background: #fffaf9; }
@@ -193,8 +194,9 @@ label { display: block; font-size: .85rem; color: var(--ink-soft); margin-top: .
 .sort { text-decoration: none; color: inherit; }
 .sort.active { color: var(--accent); font-weight: 700; }
 
-/* חוסר מסומן בצבע *ובאייקון* — לא בצבע בלבד, כדי שיישאר קריא
-   גם למי שלא מבחין בין אדום לירוק וגם בהדפסה בשחור-לבן. */
+/* A shortage is marked by colour *and* an icon — not by colour alone, so it
+   stays readable for anyone who cannot tell red from green, and in black and
+   white print. */
 .pill {
   display: inline-block;
   min-width: 2.2rem;
@@ -292,11 +294,11 @@ dialog menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; 
 
 /* ---------------------------------------------------------------- mobile */
 
-/* טבלה של 7 עמודות לא קריאה במסך צר — כל שורה הופכת לכרטיס. */
+/* A 7-column table is unreadable on a narrow screen — each row becomes a card. */
 @media (max-width: 720px) {
   main { padding: .75rem .6rem 3rem; }
 
-  /* הכרטיסים: כל תא הופך לשורת "תווית — ערך". */
+  /* The cards: every cell becomes a "label — value" row. */
   .grid, .grid thead, .grid tbody, .grid tr, .grid td { display: block; width: auto; }
   .grid { border-radius: var(--radius); }
   .grid thead { display: none; }
@@ -315,14 +317,15 @@ dialog menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; 
     font-size: .82rem;
     flex: 0 0 auto;
   }
-  /* השם ארוך ועלול לדחוף את הכרטיס לרוחב — נשבר לשורה הבאה במקום. */
+  /* The name is long and could push the card sideways — it wraps instead. */
   .grid td { overflow-wrap: anywhere; }
   .grid td.act-col { justify-content: flex-end; padding-top: .45rem; gap: .5rem; }
   .grid td.act-col::before { content: ""; }
   .grid td input[type="text"], .grid td input[type="number"] { flex: 1 1 auto; width: auto; }
 
-  /* הכותרת העליונה: רשת שנשארת בתוך המסך במקום שורת flex שגולשת.
-     min-width על הכרטיסים חייב להתאפס, אחרת הוא מרחיב את הרשת מעבר למסך. */
+  /* The top header: a grid that stays within the screen instead of a flex row
+     that overflows. min-width on the cards has to be reset, or it stretches the
+     grid beyond the screen. */
   .summary { display: grid; grid-template-columns: 1fr 1fr; }
   .summary .stat { min-width: 0; }
   .summary .stat.meta, .summary .actions { grid-column: 1 / -1; }

@@ -1,4 +1,14 @@
-# המערכת רצה כמעט כולה על הספרייה הסטנדרטית של פייתון.
-# שתי התלויות היחידות:
-Jinja2>=3.1          # תבניות ה-HTML
-PyYAML>=6.0          # קריאת config/email_format.yaml
+# The system runs almost entirely on the Python standard library.
+# The only two direct dependencies:
+Jinja2>=3.1          # the HTML templates
+PyYAML>=6.0          # reading config/email_format.yaml
+
+# The timezone database. Required on Windows, where the operating system has no
+# such database and ZoneInfo("Asia/Jerusalem") fails without it. On Linux/macOS
+# it is redundant but harmless.
+tzdata>=2024.1; sys_platform == "win32"
+
+# The PostgreSQL driver. Loaded only when DATABASE_URL is set — that is, in the
+# cloud. When running locally against SQLite it is installed but never imported.
+# [binary] ships a prebuilt wheel, so no C compiler is needed.
+psycopg[binary]>=3.1

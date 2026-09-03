@@ -80,6 +80,9 @@
     </details>
 
     <footer>
+      <form method="post" action="/issuances/{{ iss.id }}/reanalyse" class="inline">
+        <button class="btn ghost">⟳ נתח מחדש</button>
+      </form>
       <form method="post" action="/review/{{ iss.id }}/ignore" class="inline"
             data-confirm="לסמן את ההנפקה כלא רלוונטית? היא לא תיספר במלאי.">
         <button class="btn ghost">התעלם מההנפקה</button>
