@@ -6,7 +6,7 @@ import unittest
 from tests.base import REAL_CSV, DBTestCase
 
 from app import importer, repo
-from app.db import connect
+from app.db import _existing_columns, connect
 
 HEADER = 'מק"ט,שם פריט,מלאי עדכני,תקן,כמות חוסר,כמות להזמנה,הסבר\n'
 
@@ -30,7 +30,7 @@ class ImportRealFile(DBTestCase):
         importer.import_items(REAL_CSV.read_bytes())
         plaster = repo.find_item_by_sku("1102")
         self.assertEqual(plaster.standard_qty, 320)
-        columns = [r[1] for r in connect().execute("PRAGMA table_info(items)")]
+        columns = _existing_columns(connect(), "items")
         self.assertNotIn("current_stock", columns)
         self.assertNotIn("opening_stock", columns)
 

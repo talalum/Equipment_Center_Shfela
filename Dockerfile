@@ -15,7 +15,10 @@ COPY app/ ./app/
 COPY config/ ./config/
 COPY data/Inventory_Report.csv ./data/Inventory_Report.csv
 
-# המסד חייב לשבת על דיסק קבוע, אחרת הנתונים נמחקים בכל דיפלוי.
+# רלוונטי רק במצב SQLite (בלי DATABASE_URL): שם המסד הוא קובץ, והוא
+# חייב דיסק קבוע אחרת הנתונים נמחקים בכל דיפלוי.
+# כשמוגדר DATABASE_URL הנתונים יושבים ב-Postgres, הקונטיינר חסר-מצב,
+# והנפח הזה פשוט אינו בשימוש.
 VOLUME ["/data"]
 EXPOSE 8000
 

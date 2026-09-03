@@ -252,7 +252,16 @@ class Router:
         return Response.html("<h1>404 — הדף לא נמצא</h1>", status=404)
 
 
-def make_wsgi_app(router: Router, on_request: Callable[[Request], None] | None = None):
+def make_wsgi_app(
+    router: Router,
+    on_request: Callable[[Request], None] | None = None,
+    after_request: Callable[[], None] | None = None,
+):
+    """
+    `after_request` רץ תמיד בסוף הטיפול, גם כשהבקשה נכשלה. משמש לשחרור
+    משאבים שנצברו ל-thread — ראו main.py.
+    """
+
     def application(environ, start_response):
         request = build_request(environ)
         if on_request:
@@ -265,6 +274,9 @@ def make_wsgi_app(router: Router, on_request: Callable[[Request], None] | None =
 
             logging.getLogger(__name__).error("שגיאה בטיפול בבקשה:\n%s", traceback.format_exc())
             response = Response.html("<h1>500 — שגיאה בשרת</h1>", status=500)
+        finally:
+            if after_request:
+                after_request()
 
         headers = list(response.headers)
         headers.append(("Content-Type", response.content_type))

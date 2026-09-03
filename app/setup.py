@@ -1,10 +1,10 @@
 """
-הגדרה ראשונית של האתר — סיסמת כניסה, מפתח חתימה, וחיבור לתיבת הדואר.
+Initial site setup — login password, signing key, and mailbox connection.
 
     py -m app.setup
 
-הכלי כותב את הערכים לקובץ .env שיושב לצד הקוד. הקובץ הזה לא נכנס ל-git
-ולא נשלח לשום מקום — הוא נשאר על המחשב שלך בלבד.
+This tool writes the values to a .env file next to the code. That file is
+not committed to git and is never sent anywhere — it stays on your machine.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 
 from app import config, env_file
 from app.auth import hash_password
+from app.console import force_utf8_output
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -26,35 +27,35 @@ def _ask(prompt: str, default: str = "") -> str:
 
 
 def _ask_yes_no(prompt: str, default: bool = True) -> bool:
-    hint = "כן/לא" if default else "כן/לא"
+    hint = "y/n"
     while True:
-        answer = input(f"{prompt} ({hint}) [{'כן' if default else 'לא'}]: ").strip().lower()
+        answer = input(f"{prompt} ({hint}) [{'y' if default else 'n'}]: ").strip().lower()
         if not answer:
             return default
-        if answer in {"כן", "y", "yes", "כ"}:
+        if answer in {"y", "yes"}:
             return True
-        if answer in {"לא", "n", "no", "ל"}:
+        if answer in {"n", "no"}:
             return False
-        print("  לא הבנתי. אפשר לכתוב 'כן' או 'לא'.")
+        print("  Didn't understand that. Please type 'y' or 'n'.")
 
 
 def _ask_password() -> str:
     while True:
-        # getpass לא מציג את התווים בזמן ההקלדה.
-        password = getpass.getpass("סיסמה חדשה לאתר: ")
+        # getpass doesn't echo characters while typing.
+        password = getpass.getpass("New site password: ")
         if len(password) < MIN_PASSWORD_LENGTH:
-            print(f"  קצרה מדי — לפחות {MIN_PASSWORD_LENGTH} תווים.")
+            print(f"  Too short — must be at least {MIN_PASSWORD_LENGTH} characters.")
             continue
-        if password != getpass.getpass("שוב, לאימות: "):
-            print("  הסיסמאות אינן תואמות. ננסה שוב.")
+        if password != getpass.getpass("Again, to confirm: "):
+            print("  Passwords don't match. Let's try again.")
             continue
         return password
 
 
 def _write_env(path: Path, updates: dict[str, str]) -> None:
     """
-    מעדכן מפתחות קיימים במקומם ומוסיף חדשים בסוף.
-    הערות ושורות שלא נגענו בהן נשמרות כפי שהן.
+    Updates existing keys in place and appends new ones at the end.
+    Comments and untouched lines are kept as-is.
     """
     lines = path.read_text(encoding="utf-8-sig").splitlines() if path.is_file() else []
     remaining = dict(updates)
@@ -79,80 +80,81 @@ def _write_env(path: Path, updates: dict[str, str]) -> None:
 
 
 def main() -> int:
+    force_utf8_output()
     env_path = config.ENV_PATH
     existing = env_file.parse(env_path.read_text(encoding="utf-8-sig")) if env_path.is_file() else {}
     updates: dict[str, str] = {}
 
-    print("\n=== הגדרת האתר — מרכז ציוד שפלה ===\n")
-    print(f"ההגדרות ייכתבו לקובץ: {env_path}\n")
+    print("\n=== Site setup — Shfela Equipment Center ===\n")
+    print(f"Settings will be written to: {env_path}\n")
 
-    # --- 1. סיסמת כניסה ---
-    print("--- 1. סיסמת כניסה לאתר ---")
+    # --- 1. login password ---
+    print("--- 1. Site login password ---")
     if existing.get("APP_PASSWORD_HASH"):
-        print("כבר מוגדרת סיסמה.")
-        if not _ask_yes_no("להחליף אותה?", default=False):
-            print("  הסיסמה הקיימת נשמרת.")
+        print("A password is already set.")
+        if not _ask_yes_no("Replace it?", default=False):
+            print("  Keeping the existing password.")
         else:
             updates["APP_PASSWORD_HASH"] = hash_password(_ask_password())
-            print("  ✓ הסיסמה עודכנה.")
+            print("  ✓ Password updated.")
     else:
-        print("זו הסיסמה שתידרש בכל כניסה לאתר.")
+        print("This is the password required to log in to the site.")
         updates["APP_PASSWORD_HASH"] = hash_password(_ask_password())
-        print("  ✓ נקבעה סיסמה.")
+        print("  ✓ Password set.")
 
-    # --- 2. מפתח חתימה ---
-    print("\n--- 2. מפתח חתימה לעוגיות ---")
+    # --- 2. signing key ---
+    print("\n--- 2. Cookie signing key ---")
     if existing.get("SESSION_SECRET"):
-        print("  ✓ כבר קיים, לא נוגעים בו (החלפה תנתק אותך מהאתר).")
+        print("  ✓ Already set, leaving it as-is (replacing it would log you out).")
     else:
         updates["SESSION_SECRET"] = secrets.token_urlsafe(48)
-        print("  ✓ נוצר אוטומטית מחרוזת אקראית. אין מה לזכור אותה.")
+        print("  ✓ Generated automatically as a random string. Nothing to remember.")
 
-    # --- 3. תיבת הדואר ---
-    print("\n--- 3. חיבור לתיבת ה-Gmail הייעודית ---")
-    print("אפשר לדלג ולהגדיר בהמשך; עד אז אפשר להדביק מיילים ידנית באתר.")
-    if _ask_yes_no("להגדיר עכשיו?", default=False):
-        user = _ask("כתובת ה-Gmail", existing.get("IMAP_USER", ""))
-        print("\nצריך App Password של 16 תווים — לא סיסמת החשבון הרגילה.")
-        print("איך משיגים: myaccount.google.com/apppasswords (דורש אימות דו-שלבי פעיל).")
+    # --- 3. mailbox ---
+    print("\n--- 3. Connecting the dedicated Gmail account ---")
+    print("You can skip this and set it up later; until then you can paste emails manually on the site.")
+    if _ask_yes_no("Set it up now?", default=False):
+        user = _ask("Gmail address", existing.get("IMAP_USER", ""))
+        print("\nYou need a 16-character App Password — not the account's regular password.")
+        print("How to get one: myaccount.google.com/apppasswords (requires 2-Step Verification to be enabled).")
         app_password = getpass.getpass("App Password: ").replace(" ", "")
         if user and app_password:
             if len(app_password) != 16:
-                print(f"  שימי לב: הודבקו {len(app_password)} תווים ולא 16. אם החיבור ייכשל, זו הסיבה.")
+                print(f"  Note: {len(app_password)} characters were pasted, not 16. If the connection fails, that's why.")
             updates["IMAP_USER"] = user
             updates["IMAP_PASSWORD"] = app_password
-            print("  ✓ פרטי התיבה נשמרו.")
+            print("  ✓ Mailbox details saved.")
 
-            print("\nמתי למשוך מיילים?")
-            if _ask_yes_no("למשוך אוטומטית ברקע כל כמה דקות?", default=False):
-                updates["POLL_MINUTES"] = _ask("כל כמה דקות", existing.get("POLL_MINUTES", "5"))
-                print(f'  ✓ משיכה אוטומטית כל {updates["POLL_MINUTES"]} דקות.')
+            print("\nWhen should emails be fetched?")
+            if _ask_yes_no("Fetch automatically in the background every few minutes?", default=False):
+                updates["POLL_MINUTES"] = _ask("Every how many minutes", existing.get("POLL_MINUTES", "5"))
+                print(f'  ✓ Automatic fetch every {updates["POLL_MINUTES"]} minutes.')
             else:
                 updates["POLL_MINUTES"] = "0"
-                print('  ✓ רק בלחיצה על "משוך מיילים" באתר.')
+                print('  ✓ Only when clicking "Fetch emails" on the site.')
         else:
-            print("  דילגנו — לא הוזנו פרטים מלאים.")
+            print("  Skipped — details were not fully entered.")
     else:
-        print("  דילגנו.")
+        print("  Skipped.")
 
-    # --- 4. ענן ---
-    print("\n--- 4. איפה האתר ירוץ ---")
-    print("COOKIE_SECURE שולח את עוגיית הכניסה רק על חיבור מוצפן (HTTPS).")
-    print("בהרצה מקומית (http://localhost) הוא חייב להישאר כבוי, אחרת לא תוכלי להיכנס.")
-    if _ask_yes_no("האתר ירוץ בענן מאחורי HTTPS?", default=False):
+    # --- 4. cloud ---
+    print("\n--- 4. Where the site will run ---")
+    print("COOKIE_SECURE sends the login cookie only over an encrypted (HTTPS) connection.")
+    print("When running locally (http://localhost) it must stay off, otherwise you won't be able to log in.")
+    if _ask_yes_no("Will the site run in the cloud behind HTTPS?", default=False):
         updates["COOKIE_SECURE"] = "1"
-        print("  ✓ הודלק.")
+        print("  ✓ Enabled.")
     else:
         updates["COOKIE_SECURE"] = "0"
-        print("  ✓ כבוי — מתאים להרצה מקומית.")
+        print("  ✓ Disabled — suitable for local development.")
 
     _write_env(env_path, updates)
 
     print("\n" + "=" * 50)
-    print("ההגדרות נשמרו. עכשיו להריץ:\n")
-    print("    py -m app.server        (ווינדוס)")
-    print("    python3 -m app.server   (מק/לינוקס)\n")
-    print("הקובץ .env נשאר על המחשב שלך בלבד ולא נכנס ל-git.")
+    print("Settings saved. Now run:\n")
+    print("    py -m app.server        (Windows)")
+    print("    python3 -m app.server   (Mac/Linux)\n")
+    print("The .env file stays on your machine only and is not committed to git.")
     print("=" * 50 + "\n")
     return 0
 
@@ -161,5 +163,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        print("\nבוטל. לא נשמרו שינויים.")
+        print("\nCancelled. No changes were saved.")
         sys.exit(1)

@@ -129,19 +129,38 @@ class ReanalysisDoesNotFlagItself(DBTestCase):
 
 
 class MigrationOfOlderDatabase(DBTestCase):
+    def tearDown(self) -> None:
+        """
+        הבדיקה כאן בונה מחדש טבלה. ב-Postgres המסד משותף בין הבדיקות,
+        ולכן מפילים את הסכימה כדי שה-setUp הבא ייצור אותה נקייה.
+        """
+        from app import db
+
+        if db.is_postgres():
+            db.connect().execute(
+                "DROP TABLE IF EXISTS issuance_lines, adjustments, import_runs, "
+                "issuances, items CASCADE"
+            )
+        super().tearDown()
+
     def test_content_key_is_added_to_an_existing_table(self) -> None:
         """
         המסד של המשתמשת נוצר לפני שהעמודה הזו הייתה קיימת. עלייה חייבת
         להוסיף אותה בלי לאבד נתונים ובלי להיכשל.
         """
-        from app.db import _migrate, connect, init_db
+        from app import db
+        from app.db import _existing_columns, _migrate, connect, init_db
 
         conn = connect()
-        conn.execute("DROP TABLE issuances")
+        # הטבלה נבנית כאן בתחביר של המנוע הפעיל, כדי שהבדיקה תתאר מסד ישן
+        # אמיתי בשני המצבים ולא רק ב-SQLite.
+        pk = db._PK_POSTGRES if db.is_postgres() else db._PK_SQLITE
+        cascade = " CASCADE" if db.is_postgres() else ""
+        conn.execute(f"DROP TABLE issuances{cascade}")
         conn.execute(
-            """
+            f"""
             CREATE TABLE issuances (
-                id INTEGER PRIMARY KEY, message_id TEXT NOT NULL UNIQUE,
+                id {pk}, message_id TEXT NOT NULL UNIQUE,
                 email_date TEXT NOT NULL, recipient TEXT, issuer TEXT, center TEXT,
                 raw_text TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('applied','needs_review','ignored')),
@@ -154,16 +173,14 @@ class MigrationOfOlderDatabase(DBTestCase):
             "INSERT INTO issuances (message_id, email_date, raw_text, status, source, created_at) "
             "VALUES ('<old@mail>', '2026-08-28T11:19:00+00:00', 'טקסט', 'ignored', 'email', '2026-08-28T11:19:00+00:00')"
         )
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(issuances)")}
-        self.assertNotIn("content_key", columns)
+        self.assertNotIn("content_key", _existing_columns(conn, "issuances"))
 
         init_db()  # כולל את המיגרציה
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(issuances)")}
-        self.assertIn("content_key", columns)
+        self.assertIn("content_key", _existing_columns(conn, "issuances"))
         self.assertIsNotNone(repo.find_issuance_by_message_id("<old@mail>"), "הנתונים נשמרו")
 
         _migrate(conn)  # בטוח להרצה חוזרת
-        self.assertIn("content_key", {row[1] for row in conn.execute("PRAGMA table_info(issuances)")})
+        self.assertIn("content_key", _existing_columns(conn, "issuances"))
 
 
 if __name__ == "__main__":

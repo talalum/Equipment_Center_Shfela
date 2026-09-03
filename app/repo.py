@@ -1,11 +1,11 @@
 """גישה לנתונים. כל ה-SQL של המערכת יושב כאן ולא מפוזר במסכים."""
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from app.db import connect, parse_dt, utcnow
+from app.db import Row, connect, insert_returning_id, parse_dt, utcnow
 from app.parsing.normalize import normalize_sku
 
 
@@ -21,7 +21,7 @@ class Item:
     active: bool
 
     @staticmethod
-    def from_row(row: sqlite3.Row) -> "Item":
+    def from_row(row: Row) -> "Item":
         return Item(
             id=row["id"],
             sku=row["sku"],
@@ -58,13 +58,13 @@ def find_item_by_sku(raw_sku: str) -> Item | None:
     return Item.from_row(row) if row else None
 
 
-def create_item(sku: str, name: str, standard_qty: int, conn: sqlite3.Connection | None = None) -> int:
+def create_item(sku: str, name: str, standard_qty: int, conn: Any | None = None) -> int:
     conn = conn or connect()
-    cur = conn.execute(
+    return insert_returning_id(
+        conn,
         "INSERT INTO items (sku, name, standard_qty, active, created_at) VALUES (?, ?, ?, 1, ?)",
         (normalize_sku(sku), name, max(0, standard_qty), utcnow()),
     )
-    return int(cur.lastrowid)
 
 
 def update_item(item_id: int, name: str, standard_qty: int, active: bool) -> None:
@@ -112,7 +112,7 @@ class Issuance:
     lines: list[IssuanceLine]
 
 
-def _issuance_from_row(row: sqlite3.Row) -> Issuance:
+def _issuance_from_row(row: Row) -> Issuance:
     return Issuance(
         id=row["id"],
         message_id=row["message_id"],
@@ -206,7 +206,8 @@ def insert_issuance(
     from app.db import transaction
 
     with transaction() as conn:
-        cur = conn.execute(
+        issuance_id = insert_returning_id(
+            conn,
             """
             INSERT INTO issuances
                 (message_id, email_date, recipient, issuer, center, raw_text,
@@ -218,7 +219,6 @@ def insert_issuance(
                 status, source, review_note, content_key, utcnow(),
             ),
         )
-        issuance_id = int(cur.lastrowid)
         conn.executemany(
             "INSERT INTO issuance_lines (issuance_id, raw_sku, raw_name, qty, item_id) VALUES (?, ?, ?, ?, ?)",
             [(issuance_id, sku, name, qty, item_id) for sku, name, qty, item_id in lines],
@@ -284,7 +284,7 @@ def assign_line_item(line_id: int, item_id: int) -> None:
     connect().execute("UPDATE issuance_lines SET item_id = ? WHERE id = ?", (item_id, line_id))
 
 
-def get_line(line_id: int) -> sqlite3.Row | None:
+def get_line(line_id: int) -> Row | None:
     return connect().execute("SELECT * FROM issuance_lines WHERE id = ?", (line_id,)).fetchone()
 
 
@@ -304,11 +304,11 @@ class Adjustment:
 
 
 def add_adjustment(item_id: int, delta: int, reason: str, kind: str) -> int:
-    cur = connect().execute(
+    return insert_returning_id(
+        connect(),
         "INSERT INTO adjustments (item_id, delta, reason, kind, created_at) VALUES (?, ?, ?, ?, ?)",
         (item_id, delta, reason, kind, utcnow()),
     )
-    return int(cur.lastrowid)
 
 
 def add_adjustments(rows: list[tuple[int, int, str, str]]) -> int:

@@ -7,9 +7,15 @@
 from __future__ import annotations
 
 import importlib
+import os
 import unittest
 import zoneinfo
 from datetime import datetime, timezone
+
+# נתיב שאינו קיים, אבל *מוחלט* בכל מערכת הפעלה. בווינדוס נתיב מוחלט חייב
+# אות כונן, ו-reset_tzpath דוחה נתיב יחסי — ולכן "/nonexistent-tzdb" גולמי
+# היה מפיל את הבדיקה הזו בווינדוס בלבד.
+MISSING_TZDB = os.path.abspath("/nonexistent-tzdb")
 
 
 class TimezoneFallback(unittest.TestCase):
@@ -22,7 +28,7 @@ class TimezoneFallback(unittest.TestCase):
 
     def test_startup_survives_a_missing_timezone_database(self) -> None:
         """מדמה ווינדוס: אין שום נתיב עם מסד אזורי זמן."""
-        zoneinfo.reset_tzpath(to=["/nonexistent-tzdb"])
+        zoneinfo.reset_tzpath(to=[MISSING_TZDB])
         zoneinfo.ZoneInfo.clear_cache()
         main = importlib.reload(importlib.import_module("app.main"))
 

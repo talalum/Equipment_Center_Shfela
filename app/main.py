@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app import auth, config, importer, ingest, inventory, mail_sync, repo, scheduler
+from app import auth, config, db, importer, ingest, inventory, mail_sync, repo, scheduler
 from app.db import init_db
 from app.parsing.normalize import normalize_sku
 from app.web import Request, Response, Router, make_wsgi_app, safe_redirect_target
@@ -481,4 +481,7 @@ def bootstrap() -> None:
     scheduler.start()
 
 
-application = make_wsgi_app(router)
+# החיבור למסד נסגר בסוף כל בקשה. ב-SQLite זה זול, וב-Postgres זה הכרחי:
+# השרת פותח thread לכל בקשה, ולכל thread חיבור משלו — בלי שחרור מסודר
+# מכסת החיבורים של הספק נגמרת.
+application = make_wsgi_app(router, after_request=db.close_thread_connection)

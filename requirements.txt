@@ -6,3 +6,8 @@ PyYAML>=6.0          # קריאת config/email_format.yaml
 # מסד אזורי הזמן. חובה בווינדוס, שבו למערכת ההפעלה אין מסד כזה ולכן
 # ZoneInfo("Asia/Jerusalem") נכשל בלעדיו. בלינוקס/מק זה מיותר אבל לא מזיק.
 tzdata>=2024.1; sys_platform == "win32"
+
+# מנהל ההתקן של PostgreSQL. נטען רק כשמוגדר DATABASE_URL — כלומר בענן.
+# בהרצה מקומית מול SQLite הוא מותקן אך לעולם לא מיובא.
+# [binary] מביא גלגל מוכן ולכן אין צורך במהדר C.
+psycopg[binary]>=3.1

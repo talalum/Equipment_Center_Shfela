@@ -14,8 +14,17 @@ ENV_PATH = Path(os.environ.get("ENV_FILE", BASE_DIR / ".env"))
 env_file.load(ENV_PATH)
 
 # --- מסד נתונים ---
-# קובץ SQLite. בענן חייב לשבת על דיסק קבוע (persistent volume), אחרת
-# הנתונים יימחקו בכל דיפלוי מחדש — ראי README.
+# שני מנועים נתמכים, והבחירה ביניהם היא לפי DATABASE_URL בלבד:
+#
+#   DATABASE_URL מוגדר  → PostgreSQL. הנתונים יושבים בשרת נפרד, ולכן
+#                          הקונטיינר חסר-מצב ואפשר לארח אותו בלי דיסק קבוע.
+#   DATABASE_URL ריק    → SQLite. קובץ מקומי, בדיוק כמו בהרצה מקומית.
+#
+# הסכימה והשאילתות זהות בשני המצבים — ראי app/db.py.
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+# נתיב קובץ ה-SQLite. רלוונטי רק כשאין DATABASE_URL. בענן, אם בכל זאת
+# עובדים עם SQLite, הוא חייב לשבת על דיסק קבוע אחרת הנתונים יימחקו.
 DB_PATH = os.environ.get("DB_PATH", str(BASE_DIR / "data" / "warehouse.db"))
 
 # --- תבנית המייל ---
