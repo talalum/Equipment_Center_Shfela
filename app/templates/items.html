@@ -77,7 +77,13 @@
 
 <div hidden>
   {% for item in items %}
-    <form id="f-{{ item.id }}" method="post" action="/items/{{ item.id }}/update"></form>
+    {# The original values ride along on the form so that the confirmation can
+       show the change itself, and stay quiet when the standard was not touched. #}
+    <form id="f-{{ item.id }}" method="post" action="/items/{{ item.id }}/update"
+          data-confirm-standard
+          data-sku="{{ item.sku }}"
+          data-name="{{ item.name }}"
+          data-standard="{{ item.standard_qty }}"></form>
   {% endfor %}
 </div>
 {% endblock %}

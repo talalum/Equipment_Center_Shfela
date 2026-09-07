@@ -231,3 +231,36 @@ class PasswordHashing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DestructiveActionsAskFirst(DBTestCase):
+    """
+    Every action that rewrites stock figures must carry a confirmation. The
+    prompt itself is `data-confirm` (or `data-confirm-standard`) in app.js, so
+    the attribute is what these tests check: it is the part that gets dropped by
+    accident when a template is edited.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.load_real_items()
+        self.client = WSGIClient()
+
+    def test_saving_a_standard_asks_first(self) -> None:
+        _, _, body = self.client.get("/items")
+        self.assertEqual(body.count("data-confirm-standard"), 76)
+        self.assertIn('data-standard="320"', body)  # plasters, the item that started this
+
+    def test_per_item_reset_asks_first(self) -> None:
+        self.client.post("/paste", {"raw_text": SAMPLE_EMAIL})
+        _, _, body = self.client.get("/")
+        self.assertIn("data-confirm=\"איפוס לתקן", body)
+
+    def test_bulk_reset_asks_first(self) -> None:
+        self.client.post("/paste", {"raw_text": SAMPLE_EMAIL})
+        _, _, body = self.client.get("/")
+        self.assertIn("לאפס לתקן את כל", body)
+
+    def test_the_bulk_button_is_absent_when_there_is_nothing_to_reset(self) -> None:
+        _, _, body = self.client.get("/")
+        self.assertNotIn("/items/reset-all", body)

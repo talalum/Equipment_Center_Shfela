@@ -53,6 +53,30 @@ def content_fingerprint(parsed: issuance_parser.ParsedIssuance) -> str:
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()[:32]
 
 
+# An issuance already applied is not taken back out of the count through these
+# paths.
+#
+# `remaining` is never stored — it is recomputed every time from the issuances
+# applied *right now*, whereas a "reset to standard" movement stores a fixed
+# delta computed against the issuances applied *then*. Dropping an applied
+# issuance from the count therefore leaves its reset movement behind as a credit
+# against a shortage that no longer exists, and stock silently climbs above the
+# standard, with nothing on screen to say so.
+#
+# This is not hypothetical: it happened in production, and 13 items carried such
+# orphan credits — plasters showed 312 of a standard of 320 while 10 had been
+# issued.
+#
+# The way to correct stock that really is wrong is a stock count ("עדכון מלאי"),
+# which records the difference as a movement of its own and so keeps the two
+# ledgers in step.
+_APPLIED_IS_FINAL = (
+    "ההנפקה כבר נקלטה למלאי ולכן אי אפשר לשנות אותה מכאן — "
+    "שינוי כזה משאיר מאחור תנועות איפוס ומנפח את המלאי. "
+    'לתיקון המלאי בפועל יש להשתמש ב"עדכון מלאי" בלוח המצב.'
+)
+
+
 def _duplicate_note(existing) -> str:
     when = existing.email_date.strftime("%d/%m/%Y %H:%M") if existing.email_date else "תאריך לא ידוע"
     return (
@@ -134,10 +158,18 @@ def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
     prevents the same email from being fetched again, so without this action a
     fix in the code would never reach emails already taken in — they would stay
     stuck with the old error.
+
+    An issuance already applied is refused — see `_APPLIED_IS_FINAL`. Re-analysis
+    rewrites the lines and can change the status, so on an applied issuance it
+    silently rewrites stock; with the duplicate detection in place it can even
+    send an issuance that was applied long ago back to review, because a twin of
+    it has since been applied too.
     """
     issuance = repo.get_issuance(issuance_id)
     if issuance is None:
         return False, "ההנפקה לא נמצאה."
+    if issuance.status == APPLIED:
+        return False, _APPLIED_IS_FINAL
 
     fmt = issuance_parser.load_format()
     parsed = issuance_parser.parse(issuance.raw_text, fmt)
@@ -249,8 +281,16 @@ def approve_issuance(issuance_id: int) -> tuple[bool, str]:
     return True, f"ההנפקה נקלטה — {len(issuance.lines)} פריטים."
 
 
-def ignore_issuance(issuance_id: int, note: str = "סומנה ידנית להתעלמות.") -> None:
+def ignore_issuance(issuance_id: int, note: str = "סומנה ידנית להתעלמות.") -> tuple[bool, str]:
+    """Marks an issuance as irrelevant. An issuance already applied is refused —
+    see `_APPLIED_IS_FINAL`."""
+    issuance = repo.get_issuance(issuance_id)
+    if issuance is None:
+        return False, "ההנפקה לא נמצאה."
+    if issuance.status == APPLIED:
+        return False, _APPLIED_IS_FINAL
     repo.set_issuance_status(issuance_id, IGNORED, note)
+    return True, "ההנפקה סומנה כלא רלוונטית ולא תיספר במלאי."
 
 
 def record_edit(item: repo.Item, actual_qty: int, reason: str) -> int | None:

@@ -377,11 +377,8 @@ def review_approve(request: Request, issuance_id: int) -> Response:
 def review_ignore(request: Request, issuance_id: int) -> Response:
     if (redirect := login_required(request)) is not None:
         return redirect
-    if repo.get_issuance(issuance_id) is None:
-        flash(request, "ההנפקה לא נמצאה.", "error")
-        return back(request, "/review")
-    ingest.ignore_issuance(issuance_id)
-    flash(request, "ההנפקה סומנה כלא רלוונטית ולא תיספר במלאי.")
+    ok, message = ingest.ignore_issuance(issuance_id)
+    flash(request, message, "success" if ok else "error")
     return back(request, "/review")
 
 

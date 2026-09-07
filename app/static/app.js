@@ -11,6 +11,39 @@
     }
   });
 
+  function signed(n) {
+    return (n > 0 ? "+" : "") + n;
+  }
+
+  // Changing the standard moves "remaining" with it, one for one, because
+  // remaining is derived from the standard rather than stored. A typo in this
+  // field therefore shifts the whole stock picture for the item, so the change
+  // is spelled out before it is saved. Only a real change to the number asks —
+  // renaming an item or toggling "active" saves without a prompt.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form.dataset || form.dataset.confirmStandard === undefined) {
+      return;
+    }
+    var field = form.elements.standard_qty;
+    if (!field) {
+      return;
+    }
+    var before = parseInt(form.dataset.standard, 10);
+    var after = parseInt(field.value, 10);
+    if (isNaN(before) || isNaN(after) || before === after) {
+      return;
+    }
+    var message =
+      "שינוי תקן — " + form.dataset.sku + " · " + form.dataset.name + "\n\n" +
+      "תקן: " + before + " → " + after + "\n" +
+      'העמודה "נשאר" בלוח המצב תשתנה ב-' + signed(after - before) + ".\n\n" +
+      "לשמור?";
+    if (!window.confirm(message)) {
+      event.preventDefault();
+    }
+  });
+
   var dialog = document.getElementById("edit-dialog");
   if (!dialog || typeof dialog.showModal !== "function") {
     return;
