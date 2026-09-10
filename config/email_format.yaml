@@ -22,3 +22,10 @@ recipient: '^\s*שלום\s+(?P<recipient>.+?)\s*$'
 # not touch stock.
 # Leave empty to accept from every center.
 expected_center: "מרכז ציוד שפלה"
+
+# A sentence that appears in every issuance email, with a recipient name or
+# without one. An email containing it is treated as an issuance even if the
+# item list could not be read — so an issuance to an organizational unit, which
+# arrives with no name, waits for review instead of being dropped silently.
+# Leave empty to identify an issuance by the item-list anchor alone.
+issuance_marker: "ההזמנה שלך מוכנה"

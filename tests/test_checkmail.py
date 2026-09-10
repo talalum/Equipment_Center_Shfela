@@ -78,12 +78,16 @@ class CheckMail(unittest.TestCase):
                     _message("הנפקה", SAMPLE_EMAIL, "<a@x>"),
                     _message("אחר", SAMPLE_EMAIL.replace("מרכז ציוד שפלה", "מרכז ציוד ירושלים"), "<b@x>"),
                     _message("ניוזלטר", "טקסט שיווקי", "<c@x>"),
+                    # An issuance whose item list could not be read: it says
+                    # "ההזמנה שלך מוכנה", so it is an issuance and not junk.
+                    _message("הנפקה פגומה", SAMPLE_EMAIL.replace("המוצרים שהונפקו:", ""), "<d@x>"),
                 ]
             )
         )
         self.assertEqual(code, 0)
         self.assertIn("7 items", output)
         self.assertIn("another center", output)
+        self.assertIn("not an issuance email", output)
         # The parse error itself is a review note, and those stay in Hebrew.
         self.assertIn("לא נמצא העוגן", output)
         self.assertIn("1 of them", output)
