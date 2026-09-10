@@ -50,6 +50,9 @@ class Request:
     session: dict[str, Any] = field(default_factory=dict)
     #: Set to True when the session changes and a new cookie must be sent.
     session_dirty: bool = False
+    #: Set to True when the declared body was larger than MAX_UPLOAD_BYTES. The
+    #: body is then not read at all and the request is answered with 413.
+    too_large: bool = False
 
     def get(self, name: str, default: str = "") -> str:
         return self.form.get(name, self.query.get(name, default))
@@ -180,8 +183,11 @@ def build_request(environ: dict) -> Request:
         length = int(environ.get("CONTENT_LENGTH") or 0)
     except ValueError:
         length = 0
-    length = max(0, min(length, config.MAX_UPLOAD_BYTES))
-    body = environ["wsgi.input"].read(length) if length else b""
+    length = max(0, length)
+    # An over-sized body is not read even up to the limit: a truncated file
+    # would reach the importer looking valid, and rows would silently go missing.
+    too_large = length > config.MAX_UPLOAD_BYTES
+    body = environ["wsgi.input"].read(length) if length and not too_large else b""
 
     form: dict[str, str] = {}
     files: dict[str, UploadedFile] = {}
@@ -208,6 +214,7 @@ def build_request(environ: dict) -> Request:
         },
         remote_addr=environ.get("REMOTE_ADDR", "unknown"),
         session=_unsign(cookies.get(_SESSION_COOKIE, "")),
+        too_large=too_large,
     )
 
 
@@ -268,7 +275,14 @@ def make_wsgi_app(
         if on_request:
             on_request(request)
         try:
-            response = router.dispatch(request)
+            if request.too_large:
+                response = Response.html(
+                    "<h1>413 — הקובץ גדול מדי</h1>"
+                    f"<p>אפשר להעלות קובץ בגודל עד {config.upload_size_label()}.</p>",
+                    status=413,
+                )
+            else:
+                response = router.dispatch(request)
         except Exception:
             import logging
             import traceback

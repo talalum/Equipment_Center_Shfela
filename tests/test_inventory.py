@@ -60,6 +60,28 @@ class InventoryMath(DBTestCase):
         s = self.status()
         self.assertEqual((s.remaining, s.shortage), (44, 0))
 
+    def test_a_reset_closes_the_gap_but_leaves_the_column_alone(self) -> None:
+        """
+        The two figures answer different questions: the screen keeps reporting
+        what the email said went out, while the gap the stock is measured against
+        goes back to zero.
+        """
+        ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
+        self.assertEqual((self.status().issued, self.status().issued_net), (2, 2))
+        ingest.record_reset(self.item)
+        s = self.status()
+        self.assertEqual((s.issued, s.issued_net), (2, 0))
+
+    def test_remaining_always_follows_the_gap(self) -> None:
+        """standard - issued_net = remaining, whatever movements have been recorded."""
+        ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
+        for step in (lambda: ingest.record_reset(self.item),
+                     lambda: ingest.record_edit(self.item, 40, "ספירה"),
+                     lambda: ingest.record_edit(self.item, 54, "אספקה")):
+            step()
+            s = self.status()
+            self.assertEqual(s.item.standard_qty - s.issued_net, s.remaining)
+
     def test_reset_is_idempotent(self) -> None:
         ingest.ingest_issuance(SAMPLE_EMAIL, "m-1", source="paste")
         ingest.record_reset(self.item)

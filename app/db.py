@@ -85,6 +85,26 @@ CREATE TABLE IF NOT EXISTS adjustments (
     created_at TEXT    NOT NULL
 );
 
+-- Settings the user changes from the screens, as opposed to the environment
+-- variables that belong to the deployment. Currently only the intake cutoff
+-- date — see app/ingest.py.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT NOT NULL PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- A file that has been scanned and is waiting for the user to approve the
+-- comparison. Held in the database rather than in memory so that a refresh, a
+-- restart or a second worker process cannot lose it half way through. At most
+-- one row: a new upload replaces whatever was waiting.
+CREATE TABLE IF NOT EXISTS pending_imports (
+    id         {pk},
+    filename   TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS import_runs (
     id             {pk},
     filename       TEXT    NOT NULL,

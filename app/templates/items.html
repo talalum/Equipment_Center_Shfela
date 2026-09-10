@@ -8,12 +8,21 @@
   <form class="card pad" method="post" action="/items/import" enctype="multipart/form-data">
     <h2>ייבוא קובץ תקן</h2>
     <p class="hint">
-      נקראות שלוש עמודות בלבד: <code>מק"ט</code>, <code>שם פריט</code>, <code>תקן</code>.
-      העמודות <code>מלאי עדכני</code>, <code>כמות חוסר</code>, <code>כמות להזמנה</code>
-      ו-<code>הסבר</code> מתעלמות במכוון.
+      נקראות ארבע עמודות: <code>מק"ט</code>, <code>שם פריט</code>, <code>תקן מאושר</code>
+      (או <code>תקן</code>), ו-<code>מלאי לאחר הגעת משלוח</code> (או <code>מלאי עדכני</code>)
+      שנכנסת ל<b>מלאי עדכני בארון</b>.
+      שאר העמודות — <code>מלאי נוכחי</code>, <code>חוסר נטו</code>,
+      <code>כמות בהזמנה נוכחית</code>, <code>הגיע בפועל</code> ו-<code>סטטוס והסבר</code> —
+      מחושבות במערכת עצמה ומתעלמות במכוון.
       ייבוא חוזר מעדכן לפי מק"ט ולא מוחק היסטוריה.
     </p>
-    <input type="file" name="file" accept=".csv,text/csv" required>
+    <p class="hint">
+      אחרי ההעלאה תוצג השוואה מלאה לאישור. <b>שום נתון לא משתנה לפני שמאשרים אותה.</b>
+    </p>
+    <p class="hint">
+      סוגי קבצים מותרים: {{ upload_types() }} · גודל מקסימלי: {{ upload_size() }}.
+    </p>
+    <input type="file" name="file" accept="{{ upload_accept() }}" required>
     <button class="btn">ייבא</button>
     {% if last_import %}
       <p class="hint">
@@ -80,4 +89,119 @@
     <form id="f-{{ item.id }}" method="post" action="/items/{{ item.id }}/update"></form>
   {% endfor %}
 </div>
+
+{% if comparison %}
+{# The comparison between the uploaded file and the current state. Rendered with
+   the open attribute so that it is there even without JavaScript; app.js turns
+   it into a real modal. Nothing has been written at this point — the two
+   buttons at the bottom are the only ways out. #}
+<dialog id="import-dialog" class="wide" open>
+  <h2>אישור ייבוא — {{ comparison.filename }}</h2>
+
+  <p class="hint">
+    {% if comparison.has_changes %}
+      {% set changed = comparison.changed_rows | length %}
+      {% if changed == 1 %}שורה אחת תשתנה{% else %}{{ changed }} שורות ישתנו{% endif %}
+      {# Only the counts that are not zero — a list of zeros says nothing. #}
+      {% set parts = [] %}
+      {% if comparison.stock_change_count %}
+        {% set _ = parts.append(comparison.stock_change_count ~ " שינויי מלאי" if comparison.stock_change_count > 1 else "שינוי מלאי אחד") %}
+      {% endif %}
+      {% if comparison.standard_change_count %}
+        {% set _ = parts.append(comparison.standard_change_count ~ " שינויי תקן" if comparison.standard_change_count > 1 else "שינוי תקן אחד") %}
+      {% endif %}
+      {% if comparison.new_count %}
+        {% set _ = parts.append(comparison.new_count ~ " פריטים חדשים" if comparison.new_count > 1 else "פריט חדש אחד") %}
+      {% endif %}
+      {% if parts %} — {{ parts | join(" · ") }}{% endif %}.
+      {% if comparison.unchanged_count == 1 %}פריט אחד ללא שינוי אינו מוצג.
+      {% elif comparison.unchanged_count %}{{ comparison.unchanged_count }} פריטים ללא שינוי אינם מוצגים.{% endif %}
+    {% else %}
+      הקובץ תואם במדויק למה שיש במערכת — אין מה לעדכן.
+    {% endif %}
+  </p>
+
+  {% if not comparison.has_stock %}
+    <p class="banner warn">
+      בקובץ אין עמודת <code>מלאי לאחר הגעת משלוח</code> או <code>מלאי עדכני</code>,
+      ולכן <b>המלאי בארון לא ישתנה</b> — יעודכנו רק שמות ותקן.
+    </p>
+  {% endif %}
+
+  {% if comparison.has_changes %}
+  <div class="dialog-scroll">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="num-col">מק"ט</th>
+          <th>שם פריט</th>
+          <th class="num-col">תקן</th>
+          <th class="num-col">מלאי עדכני בארון</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in comparison.changed_rows %}
+        <tr>
+          <td class="num-col" data-label='מק"ט'>
+            {{ row.sku }}{% if row.is_new %} <span class="pill ok">חדש</span>{% endif %}
+          </td>
+          <td data-label="שם פריט">
+            {{ row.name }}
+            {% if row.renamed %}<span class="hint">(היה: {{ row.name_before }})</span>{% endif %}
+          </td>
+          <td class="num-col" data-label="תקן">
+            {% if row.standard_changed %}
+              <span class="was">{{ row.standard_before }}</span> ← <b>{{ row.standard }}</b>
+            {% else %}
+              {{ row.standard }}
+            {% endif %}
+          </td>
+          <td class="num-col" data-label="מלאי עדכני בארון">
+            {% if row.stock is none %}
+              <span class="hint">אין נתון בקובץ — לא ישתנה</span>
+            {% elif row.stock_changed %}
+              <span class="was">{{ row.effective_before }}</span> ← <b>{{ row.stock }}</b>
+              <span class="pill {% if row.stock_delta > 0 %}ok{% else %}bad{% endif %}">{{ signed(row.stock_delta) }}</span>
+            {% else %}
+              {{ row.stock }}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if comparison.missing %}
+    <p class="banner warn">
+      {% if comparison.missing | length == 1 %}
+        <b>פריט אחד שקיים במערכת אינו מופיע בקובץ.</b> הוא יישאר בדיוק כפי שהוא — לא בתקן ולא במלאי:
+      {% else %}
+        <b>{{ comparison.missing | length }} פריטים שקיימים במערכת אינם מופיעים בקובץ.</b>
+        הם יישארו בדיוק כפי שהם — לא בתקן ולא במלאי:
+      {% endif %}
+      {% for item in comparison.missing %}{{ item.sku }} {{ item.name }}{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+  {% endif %}
+
+  {% if comparison.problems %}
+    <details {% if comparison.rejected %}open{% endif %}>
+      <summary>
+        {% if comparison.rejected %}{{ comparison.rejected }} שורות נדחו{% else %}הערות על הקובץ{% endif %}
+      </summary>
+      <pre>{{ comparison.problems | join("\n") }}</pre>
+    </details>
+  {% endif %}
+
+  <menu>
+    <form method="post" action="/items/import/discard">
+      <button class="btn ghost">{% if comparison.has_changes %}ביטול{% else %}סגירה{% endif %}</button>
+    </form>
+    <form method="post" action="/items/import/confirm">
+      <button class="btn" {% if not comparison.has_changes %}disabled{% endif %}>אישור וייבוא</button>
+    </form>
+  </menu>
+</dialog>
+{% endif %}
 {% endblock %}

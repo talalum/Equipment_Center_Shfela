@@ -21,11 +21,22 @@ from app.repo import Item
 @dataclass(frozen=True)
 class ItemStatus:
     item: Item
-    issued: int  # total issued according to the emails taken in
+    issued: int  # what the issuance emails reported — the "הונפק" column
     adjusted: int  # total of the manual movements (positive = stock added)
 
     @property
     def issued_net(self) -> int:
+        """
+        The gap from the standard, which `remaining` and `shortage` are built on.
+
+        Deliberately not what the screen shows. "הונפק" there reports what the
+        issuance emails said went out, which is the question a warehouse asks of
+        that column; this figure also carries every manual movement, so an item
+        nobody ever issued still shows a gap once a stock count found less on the
+        shelf than the system believed. The two answer different questions, and
+        the consequence is that `standard - הונפק` on screen does not equal
+        `remaining` whenever a movement has been recorded.
+        """
         return self.issued - self.adjusted
 
     @property

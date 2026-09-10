@@ -46,6 +46,43 @@
   </div>
 </section>
 
+<details class="cutoff"{% if cutoff_behind_reset %} open{% endif %}>
+  <summary>
+    קליטת מיילים למלאי —
+    {% if intake_cutoff %}
+      מ-{{ intake_cutoff | local_dt }} והלאה
+    {% else %}
+      ללא הגבלת תאריך
+    {% endif %}
+  </summary>
+  <form method="post" action="/settings/intake-cutoff" class="bulk">
+    <label for="cutoff-input">לקלוט למלאי מיילים מ־</label>
+    <input type="datetime-local" id="cutoff-input" name="cutoff" value="{{ cutoff_input }}" required>
+    <button class="btn">שמירה</button>
+    {% if intake_cutoff %}
+      <button class="btn ghost" name="clear" value="1" formnovalidate>ביטול ההגבלה</button>
+    {% endif %}
+  </form>
+  <p class="hint">
+    מייל מלפני התאריך נרשם במערכת אך אינו נכנס למלאי, כדי שהנפקה שכבר מגולמת במה שעל המדף לא תיספר פעם שנייה.
+    {% if last_reset_at %}
+      האיפוס האחרון לתקן בוצע ב-{{ last_reset_at | local_dt }}{% if cutoff_behind_reset %} — מוצע לקלוט מהתאריך הזה והלאה{% endif %}.
+    {% endif %}
+  </p>
+
+  {% if cancellable_count %}
+  <form method="post" action="/settings/cancel-past" class="bulk"
+        data-confirm="לבטל את הספירה של {{ cancellable_count }} הנפקות שנגרעו פעמיים?&#10;&#10;אלה הנפקות שהמייל שלהן קודם ל-{{ intake_cutoff | local_dt }}, אבל הן נקלטו למערכת רק אחרי שהמלאי כבר נספר — ולכן הופחתו מכמות שכבר לקחה אותן בחשבון.&#10;&#10;לא תירשם שום תנועה מפצה. ההנפקות יישארו ביומן ההנפקות, מסומנות כ&quot;לא נספר&quot;.&#10;&#10;כדי להחזיר הנפקה כזו לספירה יש להזיז קודם את התאריך.">
+    <button class="btn ghost">⊘ בטל את הספירה של {{ cancellable_count }} הנפקות שנגרעו פעמיים</button>
+  </form>
+  <p class="hint">
+    זה מוציא מהספירה רק הנפקות שנקלטו אחרי ספירת מלאי שכבר כללה אותן. הנפקות
+    שהיו במערכת לפני הספירה נשארות — הספירה חושבה מולן, והוצאתן הייתה מנפחת את
+    המלאי. חוסרים מהנפקות שאחרי התאריך נשארים כמו שהם.
+  </p>
+  {% endif %}
+</details>
+
 <form class="toolbar" method="get" action="/">
   <input type="search" name="q" value="{{ q }}" placeholder="🔍 חיפוש שם או מק&quot;ט…" aria-label="חיפוש">
   <label class="check">
@@ -76,7 +113,7 @@
       <th>{{ sort_link('name', 'שם פריט') }}</th>
       <th class="num-col">{{ sort_link('standard', 'תקן') }}</th>
       <th class="num-col">{{ sort_link('issued', 'הונפק') }}</th>
-      <th class="num-col">{{ sort_link('remaining', 'נשאר') }}</th>
+      <th class="num-col">{{ sort_link('remaining', 'מלאי עדכני בארון') }}</th>
       <th class="num-col">{{ sort_link('shortage', 'חסר') }}</th>
       <th class="act-col">פעולות</th>
     </tr>
@@ -88,7 +125,7 @@
       <td data-label="שם פריט">{{ s.item.name }}</td>
       <td class="num-col" data-label="תקן">{{ s.item.standard_qty }}</td>
       <td class="num-col" data-label="הונפק">{{ s.issued }}</td>
-      <td class="num-col" data-label="נשאר">{{ s.remaining }}</td>
+      <td class="num-col" data-label="מלאי עדכני בארון">{{ s.remaining }}</td>
       <td class="num-col shortage" data-label="חסר">
         {% if s.in_shortage %}
           <span class="pill bad">⚠ {{ s.shortage }}</span>
@@ -105,7 +142,7 @@
                 data-standard="{{ s.item.standard_qty }}"
                 data-remaining="{{ s.remaining }}">✎</button>
         <form method="post" action="/items/{{ s.item.id }}/reset" class="inline"
-              data-confirm="איפוס לתקן — {{ s.item.sku }} · {{ s.item.name }}&#10;&#10;נשאר: {{ s.remaining }} → {{ s.item.standard_qty }}&#10;חסר: {{ s.shortage }} → 0&#10;&#10;תירשם תנועה של {{ signed(s.item.standard_qty - s.remaining) }}.">
+              data-confirm="איפוס לתקן — {{ s.item.sku }} · {{ s.item.name }}&#10;&#10;מלאי בארון: {{ s.remaining }} → {{ s.item.standard_qty }}&#10;חסר: {{ s.shortage }} → 0&#10;&#10;תירשם תנועה של {{ signed(s.item.standard_qty - s.remaining) }}.">
           <button class="icon" title="איפוס לתקן"
                   {% if s.remaining == s.item.standard_qty %}disabled{% endif %}>⟲</button>
         </form>
@@ -119,7 +156,7 @@
 <dialog id="edit-dialog">
   <form method="post" id="edit-form">
     <h2>עדכון מלאי — <span id="ed-title"></span></h2>
-    <p class="hint">תקן: <b id="ed-standard"></b> · נשאר לפי המערכת: <b id="ed-remaining"></b></p>
+    <p class="hint">תקן: <b id="ed-standard"></b> · מלאי בארון לפי המערכת: <b id="ed-remaining"></b></p>
     <label for="ed-qty">כמה יש בפועל בארון?</label>
     <input type="number" id="ed-qty" name="actual_qty" required min="0" step="1">
     <label for="ed-reason">סיבה</label>

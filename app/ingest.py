@@ -5,14 +5,16 @@ The two golden rules:
   1. Deduplication by Message-ID — an email is never counted twice.
   2. Intake is all-or-nothing — an issuance with a single problematic line waits
      for review as a whole, because a partial intake silently produces wrong stock.
+  3. Nothing that is already in the count is ever taken back out of it — see
+     `before_intake_cutoff`.
 """
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from app import inventory, repo
+from app import inventory, localtime, repo
 from app.parsing import issuance_parser
 from app.parsing.normalize import clean_text
 
@@ -29,6 +31,7 @@ class IngestResult:
     issuance_id: int | None
     status: str
     duplicate: bool = False
+    before_cutoff: bool = False
     message: str = ""
 
 
@@ -51,6 +54,58 @@ def content_fingerprint(parsed: issuance_parser.ParsedIssuance) -> str:
         items,
     ]
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def before_intake_cutoff(email_date: datetime | None) -> datetime | None:
+    """
+    The intake cutoff that this email precedes, or None when it is inside the
+    window.
+
+    Why a cutoff exists at all: a reset to standard declares "the cupboard now
+    holds exactly the standard quantity". Every issuance that physically
+    happened before that moment is therefore already accounted for in what is
+    on the shelf. An email from before it that has not yet been taken in would
+    create a shortage for equipment that has already been replenished — the same
+    issuance counted twice.
+
+    Only issuances not yet applied are affected, and moving the date never takes
+    one back out of the count. `remaining` is recomputed every time from the
+    issuances applied *right now*, whereas a reset movement stores a fixed delta
+    computed against the issuances applied *then*. Dropping an applied issuance
+    would leave its reset movement behind as a credit against a shortage that no
+    longer exists, and stock would climb above the standard with nothing on
+    screen to say so. The way to correct stock that really is wrong is a stock
+    count ("עדכון מלאי"), which records the difference as a movement of its own
+    and so keeps the two ledgers in step.
+    """
+    cutoff = repo.get_intake_cutoff()
+    if cutoff is None:
+        return None
+    return cutoff if _is_before(email_date, cutoff) else None
+
+
+def _is_before(email_date: datetime | None, moment: datetime) -> bool:
+    """
+    An email date is compared as a moment, never as a string: `email_date` keeps
+    the offset the email was sent with (+03:00 from Israel, +00:00 from a
+    forward), so comparing the stored text would put 02:00 Israel time after a
+    midnight-UTC boundary it actually precedes.
+    """
+    if email_date is None:
+        return False
+    return localtime.as_utc(email_date) < localtime.as_utc(moment)
+
+
+def _cutoff_note(cutoff: datetime) -> str:
+    return (
+        f"המייל קודם לתאריך תחילת הקליטה ({localtime.format_dt(cutoff)}) ולכן אינו נספר במלאי — "
+        "ההנפקה הזו כבר מגולמת באיפוס לתקן שבוצע אחריה.\n"
+        "אם היא כן צריכה להיכנס — יש להזיז את התאריך בלוח המצב ולנתח מחדש."
+    )
+
+
+def _cutoff_message(cutoff: datetime) -> str:
+    return f"המייל קודם לתאריך תחילת הקליטה ({localtime.format_dt(cutoff)}) ולא נקלט למלאי."
 
 
 def _duplicate_note(existing) -> str:
@@ -158,8 +213,16 @@ def reanalyse_issuance(issuance_id: int) -> tuple[bool, str]:
     fmt = issuance_parser.load_format()
     parsed = issuance_parser.parse(issuance.raw_text, fmt)
     status, note, message, lines = _classify(parsed, fmt)
-
     content_key = content_fingerprint(parsed) if parsed.lines else None
+
+    # An issuance already in the count is deliberately left out of this check:
+    # the cutoff governs what may still enter stock, never what comes back out
+    # of it — see before_intake_cutoff.
+    if issuance.status != APPLIED and status != IGNORED:
+        cutoff = before_intake_cutoff(issuance.email_date)
+        if cutoff is not None:
+            status, note, message = IGNORED, _cutoff_note(cutoff), _cutoff_message(cutoff)
+
     if status == APPLIED:
         twin = repo.find_applied_with_content(content_key, exclude_id=issuance_id)
         if twin is not None:
@@ -219,12 +282,20 @@ def ingest_issuance(
     parsed = issuance_parser.parse(raw_text, fmt)
 
     status, note, message, lines = _classify(parsed, fmt)
+    content_key = content_fingerprint(parsed) if parsed.lines else None
+
+    # Before the cutoff the content of the email does not matter, so this
+    # decision comes first — except over an email already ignored for a more
+    # specific reason, whose own explanation is the more useful one to keep.
+    stamp = email_date or datetime.now(timezone.utc)
+    cutoff = None if status == IGNORED else before_intake_cutoff(stamp)
+    if cutoff is not None:
+        status, note, message = IGNORED, _cutoff_note(cutoff), _cutoff_message(cutoff)
 
     # An issuance that looks identical to one already applied is neither applied
     # nor discarded on its own — it goes to a manual decision, because the email
     # cannot tell us whether this is a re-forward or genuinely a second issuance
     # of the same equipment to the same person.
-    content_key = content_fingerprint(parsed) if parsed.lines else None
     if status == APPLIED:
         twin = repo.find_applied_with_content(content_key)
         if twin is not None:
@@ -232,10 +303,9 @@ def ingest_issuance(
             note = _duplicate_note(twin)
             message = "המייל נראה כהעברה חוזרת של הנפקה שכבר נקלטה — ממתין להכרעה."
 
-    stamp = (email_date or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     issuance_id = repo.insert_issuance(
         message_id=message_id,
-        email_date=stamp,
+        email_date=stamp.isoformat(timespec="seconds"),
         recipient=parsed.recipient,
         issuer=parsed.issuer,
         center=parsed.center,
@@ -246,7 +316,12 @@ def ingest_issuance(
         lines=lines,
         content_key=content_key,
     )
-    return IngestResult(issuance_id=issuance_id, status=status, message=message)
+    return IngestResult(
+        issuance_id=issuance_id,
+        status=status,
+        before_cutoff=cutoff is not None,
+        message=message,
+    )
 
 
 def approve_issuance(issuance_id: int) -> tuple[bool, str]:
@@ -256,6 +331,13 @@ def approve_issuance(issuance_id: int) -> tuple[bool, str]:
         return False, "ההנפקה לא נמצאה."
     if issuance.status == APPLIED:
         return False, "ההנפקה כבר נקלטה."
+    cutoff = before_intake_cutoff(issuance.email_date)
+    if cutoff is not None:
+        return False, (
+            f"ההנפקה קודמת לתאריך תחילת הקליטה ({localtime.format_dt(cutoff)}) ולכן אינה נכנסת "
+            "למלאי — היא כבר מגולמת באיפוס לתקן שבוצע אחריה. אם היא כן צריכה להיכנס, "
+            "יש להזיז את התאריך בלוח המצב."
+        )
     if not issuance.lines:
         return False, "אין שורות פריטים בהנפקה הזו."
     unmatched = [line.raw_sku for line in issuance.lines if not line.matched]
@@ -267,6 +349,114 @@ def approve_issuance(issuance_id: int) -> tuple[bool, str]:
 
 def ignore_issuance(issuance_id: int, note: str = "סומנה ידנית להתעלמות.") -> None:
     repo.set_issuance_status(issuance_id, IGNORED, note)
+
+
+#: A cap on the batch operations below. High enough that the mailbox of a
+#: single equipment centre never reaches it, low enough to stay a bounded query.
+_ALL_ISSUANCES = 5000
+
+
+@dataclass
+class CancelResult:
+    cancelled: int = 0
+    pending_closed: int = 0
+    items_affected: int = 0
+    #: Items left too high by the cancellation, as (sku, name, units). Their
+    #: asserted quantity had already absorbed the issuance — see
+    #: `cancel_double_counted`.
+    needs_recount: list[tuple[str, str, int]] = field(default_factory=list)
+
+
+def _double_counted(moment: datetime) -> list[repo.Issuance]:
+    """
+    The applied issuances that are being counted twice: their email predates
+    `moment`, and they entered the database only after a stock movement had
+    already settled the count.
+
+    The second half is what makes this correct, and it is not the same as the
+    email date. A stock count states "the shelf holds exactly this much now", so
+    an issuance ingested *afterwards* that describes an earlier event subtracts
+    from a quantity that already reflects it. An issuance that was in the
+    database *before* that count is a different matter entirely: the count was
+    computed with it included, so removing it now would push stock up by its
+    quantity.
+
+    With no movement ever recorded there is nothing that could have absorbed
+    them, so the email date alone decides.
+    """
+    settled_at = repo.earliest_movement_at()
+    return [
+        issuance
+        for issuance in repo.list_issuances((APPLIED,), limit=_ALL_ISSUANCES)
+        if _is_before(issuance.email_date, moment)
+        and (
+            settled_at is None
+            or (issuance.created_at is not None and issuance.created_at > settled_at)
+        )
+    ]
+
+
+def cancel_double_counted(moment: datetime) -> CancelResult:
+    """
+    Takes the double-counted issuances out of the stock count, so that what is
+    on the screen matches what is on the shelf.
+
+    This is the retroactive half of the intake cutoff: the cutoff decides about
+    emails still to arrive, this decides about the ones already in the database.
+
+    Why not simply reset to standard instead: a reset forces the item to exactly
+    its standard quantity, wiping out the shortage from issuances after the date
+    too — those are real and still outstanding. This removes only the part of
+    the count that was subtracted twice, and records no compensating movements
+    at all.
+
+    `needs_recount` carries the one case this cannot fix by itself. An item that
+    had a stock movement recorded *after* the issuance entered has already
+    absorbed it into an asserted quantity, so removing the issuance now leaves
+    that item too high by its quantity. Those items are reported by name rather
+    than quietly left wrong, and a stock count ("עדכון מלאי") on each of them
+    puts it right.
+    """
+    moment = localtime.as_utc(moment)
+    applied = _double_counted(moment)
+    # An issuance from before the date can never be approved anyway, so leaving
+    # it waiting in the review queue would only mislead.
+    pending = [
+        issuance
+        for issuance in repo.list_issuances((NEEDS_REVIEW,), limit=_ALL_ISSUANCES)
+        if _is_before(issuance.email_date, moment)
+    ]
+    if not applied and not pending:
+        return CancelResult()
+
+    units: dict[int, int] = {}
+    names: dict[int, tuple[str, str]] = {}
+    for issuance in applied:
+        for line in issuance.lines:
+            if line.item_id:
+                units[line.item_id] = units.get(line.item_id, 0) + line.qty
+                names[line.item_id] = (line.item_sku or line.raw_sku, line.item_name or line.raw_name)
+
+    stamps = [issuance.created_at for issuance in applied if issuance.created_at]
+    absorbed = repo.items_with_movements_since(list(units), min(stamps)) if stamps else set()
+
+    note = (
+        f"בוטלה הספירה — ההנפקה נקלטה למערכת אחרי שהמלאי כבר נספר, "
+        f"ולכן נגרעה פעמיים. התאריך שנבחר: {localtime.format_dt(moment)}."
+    )
+    return CancelResult(
+        cancelled=repo.set_issuances_status([i.id for i in applied], IGNORED, note),
+        pending_closed=repo.set_issuances_status([i.id for i in pending], IGNORED, note),
+        items_affected=len(units),
+        needs_recount=sorted(
+            ((names[i][0], names[i][1], units[i]) for i in absorbed), key=lambda r: -r[2]
+        ),
+    )
+
+
+def count_double_counted(moment: datetime) -> int:
+    """How many issuances `cancel_double_counted` would take out — for the confirmation."""
+    return len(_double_counted(localtime.as_utc(moment)))
 
 
 def record_edit(item: repo.Item, actual_qty: int, reason: str) -> int | None:

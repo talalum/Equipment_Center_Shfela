@@ -26,27 +26,29 @@ class TimezoneFallback(unittest.TestCase):
 
     def tearDown(self) -> None:
         zoneinfo.reset_tzpath(to=list(self._tzpath))
+        importlib.reload(importlib.import_module("app.localtime"))
         importlib.reload(importlib.import_module("app.main"))
 
     def test_startup_survives_a_missing_timezone_database(self) -> None:
         """Simulates Windows: no path holds a timezone database."""
         zoneinfo.reset_tzpath(to=[MISSING_TZDB])
         zoneinfo.ZoneInfo.clear_cache()
-        main = importlib.reload(importlib.import_module("app.main"))
+        localtime = importlib.reload(importlib.import_module("app.localtime"))
+        importlib.reload(importlib.import_module("app.main"))
 
-        self.assertIsNotNone(main.LOCAL_TZ, "a fallback timezone must be chosen rather than crashing")
-        rendered = main._local_dt(datetime(2026, 9, 1, 14, 32, tzinfo=timezone.utc))
+        self.assertIsNotNone(localtime.LOCAL_TZ, "a fallback timezone must be chosen rather than crashing")
+        rendered = localtime.format_dt(datetime(2026, 9, 1, 14, 32, tzinfo=timezone.utc))
         self.assertRegex(rendered, r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$")
 
     def test_unknown_timezone_name_falls_back(self) -> None:
-        from app.main import _local_timezone
+        from app.localtime import local_timezone
 
-        self.assertIsNotNone(_local_timezone("Mars/Olympus_Mons"))
+        self.assertIsNotNone(local_timezone("Mars/Olympus_Mons"))
 
     def test_valid_timezone_is_used_when_available(self) -> None:
-        from app.main import _local_timezone
+        from app.localtime import local_timezone
 
-        tz = _local_timezone("Asia/Jerusalem")
+        tz = local_timezone("Asia/Jerusalem")
         # September in Israel = daylight saving time, UTC+3.
         offset = datetime(2026, 9, 1, 12, tzinfo=timezone.utc).astimezone(tz).utcoffset()
         self.assertEqual(offset.total_seconds(), 3 * 3600)
@@ -54,14 +56,20 @@ class TimezoneFallback(unittest.TestCase):
 
 class DateRendering(unittest.TestCase):
     def test_naive_datetime_is_treated_as_utc(self) -> None:
-        from app.main import _local_dt
+        from app.localtime import format_dt
 
-        self.assertTrue(_local_dt(datetime(2026, 9, 1, 14, 32)))
+        self.assertTrue(format_dt(datetime(2026, 9, 1, 14, 32)))
 
     def test_none_renders_empty(self) -> None:
-        from app.main import _local_dt
+        from app.localtime import format_dt
 
-        self.assertEqual(_local_dt(None), "")
+        self.assertEqual(format_dt(None), "")
+
+    def test_the_screen_filter_is_the_shared_one(self) -> None:
+        """One conversion for the whole system, so no screen can drift from another."""
+        from app import localtime, main
+
+        self.assertIs(main.env.filters["local_dt"], localtime.format_dt)
 
 
 class NoRemovedStdlibModules(unittest.TestCase):

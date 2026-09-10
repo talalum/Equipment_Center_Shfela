@@ -1,6 +1,7 @@
 /* Equipment Center Shfela — an RTL design for an internal tool. */
 
 :root {
+  color-scheme: light;
   --bg: #f4f6f8;
   --surface: #ffffff;
   --ink: #16202a;
@@ -14,8 +15,43 @@
   --ok-bg: #e8f5ee;
   --warn: #8a5a00;
   --warn-bg: #fff4dd;
+  --ok-line: #bfe0cd;
+  --bad-line: #f1c9c7;
+  --warn-line: #efd9a8;
+  --head-bg: #eef2f6;
+  --row-hover: #f8fafc;
+  --short-bg: #fffaf9;
+  --short-hover: #fff4f2;
   --radius: 8px;
   --shadow: 0 1px 3px rgb(16 32 48 / 12%);
+}
+
+/* Dark mode. Only the colours change; every rule below keeps reading the same
+   names. The attribute is set by theme.js before the first paint, from the
+   choice saved in this browser or, failing that, from the operating system. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121820;
+  --surface: #1b232d;
+  --ink: #e6ecf2;
+  --ink-soft: #9dafc0;
+  --line: #303d4b;
+  --accent: #6cb6e4;
+  --accent-ink: #0b1219;
+  --bad: #ff9c96;
+  --bad-bg: #3a1f20;
+  --ok: #79d4a0;
+  --ok-bg: #17321f;
+  --warn: #e9c078;
+  --warn-bg: #362a12;
+  --ok-line: #2c5a3c;
+  --bad-line: #5d3234;
+  --warn-line: #5a4620;
+  --head-bg: #222c38;
+  --row-hover: #202a35;
+  --short-bg: #2a1f21;
+  --short-hover: #33262a;
+  --shadow: 0 1px 3px rgb(0 0 0 / 45%);
 }
 
 * { box-sizing: border-box; }
@@ -32,6 +68,9 @@ body {
 body.centered {
   display: grid;
   place-items: center;
+  /* Keeps the card and the theme button together as one centred group, rather
+     than each one centred inside half the screen. */
+  align-content: center;
   min-height: 100vh;
   padding: 1rem;
 }
@@ -64,7 +103,26 @@ a { color: var(--accent); }
 }
 .topbar nav a:hover { background: var(--bg); }
 .topbar nav a.on { background: var(--accent); color: var(--accent-ink); }
-.logout { margin-inline-start: auto; color: var(--ink-soft); text-decoration: none; font-size: .9rem; }
+.topbar-end { display: flex; align-items: center; gap: .5rem; margin-inline-start: auto; }
+.logout { color: var(--ink-soft); text-decoration: none; font-size: .9rem; }
+
+/* The theme switch only appears once theme.js has run — without the script the
+   button would have nothing to do. The glyph follows the theme in CSS, so it is
+   never briefly wrong while the page is still loading. */
+.theme-toggle { display: none; }
+:root[data-theme] .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Never let a crowded topbar squeeze the button below a tappable size. */
+  flex: 0 0 auto;
+}
+.theme-toggle::before { content: "☾︎"; }
+:root[data-theme="dark"] .theme-toggle::before { content: "☀︎"; }
+/* The login page has no topbar to hold it. It sits under the card in the
+   normal flow — pinned to a corner it would end up beneath the address bar
+   of a phone browser, looking cut off and refusing the tap. */
+.theme-toggle.standalone { margin-top: .85rem; }
 
 /* ---------------------------------------------------------------- banners */
 
@@ -75,9 +133,9 @@ a { color: var(--accent); }
   border: 1px solid var(--line);
   background: var(--surface);
 }
-.banner.success { background: var(--ok-bg); border-color: #bfe0cd; color: var(--ok); }
-.banner.error { background: var(--bad-bg); border-color: #f1c9c7; color: var(--bad); }
-.banner.warn { background: var(--warn-bg); border-color: #efd9a8; color: var(--warn); }
+.banner.success { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+.banner.error { background: var(--bad-bg); border-color: var(--bad-line); color: var(--bad); }
+.banner.warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
 
 .empty { color: var(--ink-soft); padding: 2rem 0; text-align: center; }
 .hint { color: var(--ink-soft); font-size: .88rem; margin: .25rem 0 .75rem; }
@@ -151,8 +209,15 @@ code { background: var(--bg); padding: .1rem .3rem; border-radius: 4px; font-siz
 .check { display: flex; align-items: center; gap: .35rem; white-space: nowrap; }
 .inline { display: inline; }
 
+/* The intake cutoff date — folded away, because it is set rarely. */
+.cutoff { margin-bottom: .75rem; }
+.cutoff > summary { color: var(--ink-soft); font-size: .9rem; padding: .25rem 0; }
+.cutoff .bulk { margin: .5rem 0 .25rem; }
+.cutoff label { margin: 0; white-space: nowrap; }
+.cutoff .hint { margin-bottom: 0; }
+
 input[type="text"], input[type="number"], input[type="search"], input[type="password"],
-select, textarea {
+input[type="datetime-local"], select, textarea {
   font: inherit;
   padding: .4rem .55rem;
   border: 1px solid var(--line);
@@ -181,14 +246,14 @@ label { display: block; font-size: .85rem; color: var(--ink-soft); margin-top: .
   box-shadow: var(--shadow);
 }
 .grid th, .grid td { padding: .5rem .7rem; text-align: start; border-bottom: 1px solid var(--line); }
-.grid thead th { background: #eef2f6; font-size: .85rem; white-space: nowrap; }
+.grid thead th { background: var(--head-bg); font-size: .85rem; white-space: nowrap; }
 .grid tbody tr:last-child td { border-bottom: 0; }
-.grid tbody tr:hover { background: #f8fafc; }
+.grid tbody tr:hover { background: var(--row-hover); }
 /* Numbers are right-aligned so columns can be compared at a glance */
 .num-col { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .act-col { text-align: end; white-space: nowrap; }
-.grid tr.short { background: #fffaf9; }
-.grid tr.short:hover { background: #fff4f2; }
+.grid tr.short { background: var(--short-bg); }
+.grid tr.short:hover { background: var(--short-hover); }
 .grid tr.muted-row td { opacity: .55; }
 
 .sort { text-decoration: none; color: inherit; }
@@ -206,8 +271,8 @@ label { display: block; font-size: .85rem; color: var(--ink-soft); margin-top: .
   font-weight: 700;
   font-size: .88rem;
 }
-.pill.bad { background: var(--bad-bg); color: var(--bad); border: 1px solid #f1c9c7; }
-.pill.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bfe0cd; }
+.pill.bad { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad-line); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-line); }
 
 /* ---------------------------------------------------------------- cards */
 
@@ -251,7 +316,7 @@ label { display: block; font-size: .85rem; color: var(--ink-soft); margin-top: .
 .tag.muted { opacity: .8; }
 
 .lines { width: 100%; border-collapse: collapse; }
-.lines td { padding: .35rem .9rem; border-bottom: 1px solid #eef2f6; vertical-align: middle; }
+.lines td { padding: .35rem .9rem; border-bottom: 1px solid var(--head-bg); vertical-align: middle; }
 .lines tr:last-child td { border-bottom: 0; }
 .lines .mark { width: 1.5rem; font-weight: 700; }
 .lines .fix { display: flex; gap: .4rem; flex-wrap: wrap; padding: .35rem .9rem; }
@@ -286,9 +351,23 @@ dialog {
   background: var(--surface);
 }
 dialog::backdrop { background: rgb(16 32 48 / 45%); }
+:root[data-theme="dark"] dialog::backdrop { background: rgb(0 0 0 / 60%); }
 dialog h2 { margin-top: 0; }
 dialog input { width: 100%; }
 dialog menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; margin: 1rem 0 0; }
+dialog menu form { margin: 0; }
+
+/* The import comparison holds a table, and needs far more room than the stock
+   edit box. The list scrolls inside the dialog so the buttons stay in view. */
+dialog.wide { width: min(52rem, calc(100vw - 2rem)); }
+.dialog-scroll { max-height: min(55vh, 30rem); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.dialog-scroll .grid { margin: 0; border: 0; }
+.dialog-scroll thead th { position: sticky; top: 0; z-index: 1; }
+dialog .banner { margin: .75rem 0 0; }
+dialog details { margin-top: .75rem; }
+dialog pre { white-space: pre-wrap; font-size: .85rem; margin: .5rem 0 0; }
+/* The previous value, next to the new one. */
+.was { color: var(--ink-soft); text-decoration: line-through; }
 .preview { min-height: 1.4rem; font-size: .9rem; color: var(--accent); margin: .75rem 0 0; }
 .preview.bad { color: var(--bad); }
 
@@ -336,13 +415,12 @@ dialog menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; 
 
   .topbar { gap: .4rem .75rem; padding: .5rem .6rem; }
   .topbar nav { width: 100%; order: 3; }
-  .logout { margin-inline-start: 0; }
 
   .card > footer .btn, .lines .fix { width: 100%; }
   .lines .fix select { flex: 1 1 10rem; min-width: 0; }
 }
 
 @media print {
-  .topbar, .toolbar, .bulk, .summary .actions, .act-col { display: none; }
+  .topbar, .toolbar, .bulk, .cutoff, .summary .actions, .act-col { display: none; }
   .grid { box-shadow: none; }
 }
