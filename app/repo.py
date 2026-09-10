@@ -1,8 +1,9 @@
 """Data access. All of the system SQL lives here rather than scattered across the screens."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from app.db import Row, connect, insert_returning_id, parse_dt, utcnow
@@ -110,6 +111,10 @@ class Issuance:
     source: str
     review_note: str | None
     lines: list[IssuanceLine]
+    #: When the issuance entered the database — as opposed to `email_date`,
+    #: which is when the email was sent. Needed to tell whether a stock movement
+    #: was recorded while this issuance was already in the count.
+    created_at: datetime | None = None
 
 
 def _issuance_from_row(row: Row) -> Issuance:
@@ -125,6 +130,7 @@ def _issuance_from_row(row: Row) -> Issuance:
         source=row["source"],
         review_note=row["review_note"],
         lines=[],
+        created_at=parse_dt(row["created_at"]),
     )
 
 
@@ -281,6 +287,23 @@ def set_issuance_status(issuance_id: int, status: str, review_note: str | None) 
     )
 
 
+def set_issuances_status(issuance_ids: list[int], status: str, review_note: str | None) -> int:
+    """
+    Changes a batch of issuances in one transaction, so a half-finished run
+    cannot leave the stock count in a state nobody asked for.
+    """
+    if not issuance_ids:
+        return 0
+    from app.db import transaction
+
+    with transaction() as conn:
+        conn.executemany(
+            "UPDATE issuances SET status = ?, review_note = ? WHERE id = ?",
+            [(status, review_note, issuance_id) for issuance_id in issuance_ids],
+        )
+    return len(issuance_ids)
+
+
 def assign_line_item(line_id: int, item_id: int) -> None:
     connect().execute("UPDATE issuance_lines SET item_id = ? WHERE id = ?", (item_id, line_id))
 
@@ -324,6 +347,55 @@ def add_adjustments(rows: list[tuple[int, int, str, str]]) -> int:
     return len(rows)
 
 
+def earliest_movement_at() -> datetime | None:
+    """
+    When the count was first settled by hand — the earliest stock movement.
+
+    An issuance that entered the database after this point was subtracted from a
+    quantity somebody had already asserted, which is what makes it a double
+    count. See `ingest.cancel_double_counted`.
+    """
+    row = connect().execute("SELECT MIN(created_at) AS first_movement FROM adjustments").fetchone()
+    return parse_dt(row["first_movement"] if row else None)
+
+
+def items_with_movements_since(item_ids: list[int], moment: datetime) -> set[int]:
+    """
+    Which of these items had a stock movement recorded from this moment on.
+
+    Those are the items whose asserted quantity already absorbed the issuance
+    about to be cancelled, so cancelling it leaves them too high by its
+    quantity — they need a fresh stock count.
+    """
+    if not item_ids:
+        return set()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    placeholders = ",".join("?" * len(item_ids))
+    rows = connect().execute(
+        f"SELECT DISTINCT item_id FROM adjustments "
+        f"WHERE item_id IN ({placeholders}) AND created_at > ?",
+        (*item_ids, moment.astimezone(timezone.utc).isoformat(timespec="seconds")),
+    )
+    return {row["item_id"] for row in rows}
+
+
+def count_movements_since(moment: datetime) -> int:
+    """
+    How many manual stock movements were recorded from this moment on.
+
+    Every `created_at` in this table is written by `utcnow()`, so it is always
+    UTC in the same shape and comparing the strings is sound.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    row = connect().execute(
+        "SELECT COUNT(*) AS n FROM adjustments WHERE created_at >= ?",
+        (moment.astimezone(timezone.utc).isoformat(timespec="seconds"),),
+    ).fetchone()
+    return int(row["n"])
+
+
 def list_adjustments(limit: int = 300) -> list[Adjustment]:
     rows = connect().execute(
         """
@@ -346,6 +418,64 @@ def list_adjustments(limit: int = 300) -> list[Adjustment]:
         )
         for r in rows
     ]
+
+
+# ----------------------------------------------------------------- settings
+
+#: Emails dated before this moment are recorded but kept out of the stock
+#: count — see `ingest.before_intake_cutoff`.
+INTAKE_CUTOFF = "intake_cutoff"
+
+
+def get_setting(key: str) -> str | None:
+    row = connect().execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(key: str, value: str | None) -> None:
+    """
+    An empty value deletes the row, so "not set" has exactly one representation
+    and no caller has to distinguish a missing row from an empty string.
+
+    Delete-then-insert rather than an upsert, because it reads the same in both
+    engines — see the note at the top of app/db.py.
+    """
+    from app.db import transaction
+
+    with transaction() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        if value:
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, utcnow()),
+            )
+
+
+def get_intake_cutoff() -> datetime | None:
+    return parse_dt(get_setting(INTAKE_CUTOFF))
+
+
+def set_intake_cutoff(moment: datetime | None) -> None:
+    """None removes the cutoff, and intake goes back to accepting any date."""
+    if moment is None:
+        set_setting(INTAKE_CUTOFF, None)
+        return
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    set_setting(INTAKE_CUTOFF, moment.astimezone(timezone.utc).isoformat(timespec="seconds"))
+
+
+def last_reset_at() -> datetime | None:
+    """
+    When the most recent reset to standard was recorded.
+
+    Offered on the screen as the cutoff date, because that reset is exactly the
+    moment from which the past stopped being relevant to the count.
+    """
+    row = connect().execute(
+        "SELECT MAX(created_at) AS last_reset FROM adjustments WHERE kind = ?", ("reset",)
+    ).fetchone()
+    return parse_dt(row["last_reset"] if row else None)
 
 
 # -------------------------------------------------------------- import runs
@@ -383,3 +513,48 @@ def last_import_run() -> ImportRun | None:
         report=row["report"],
         created_at=parse_dt(row["created_at"]),
     )
+
+
+# ---------------------------------------------------------- pending import
+
+
+@dataclass(frozen=True)
+class PendingImport:
+    """A scanned file waiting for the user to approve the comparison."""
+
+    filename: str
+    payload: dict
+    created_at: datetime | None
+
+
+def save_pending_import(filename: str, payload: dict) -> None:
+    """
+    Stores the scan, replacing any earlier one. At most one file waits at a
+    time — a second upload is a change of mind about the first, not a queue.
+    """
+    from app.db import transaction
+
+    stamp = utcnow()
+    with transaction() as conn:
+        conn.execute("DELETE FROM pending_imports")
+        conn.execute(
+            "INSERT INTO pending_imports (filename, payload, created_at) VALUES (?, ?, ?)",
+            (filename, json.dumps(payload, ensure_ascii=False), stamp),
+        )
+
+
+def get_pending_import() -> PendingImport | None:
+    row = connect().execute("SELECT * FROM pending_imports ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    try:
+        payload = json.loads(row["payload"])
+    except (TypeError, ValueError):
+        # Stored content that cannot be read is not worth bringing a screen down
+        # over — the user simply uploads the file again.
+        return None
+    return PendingImport(filename=row["filename"], payload=payload, created_at=parse_dt(row["created_at"]))
+
+
+def clear_pending_import() -> None:
+    connect().execute("DELETE FROM pending_imports")

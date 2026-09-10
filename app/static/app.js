@@ -1,4 +1,4 @@
-/* Action confirmations and the edit modal. */
+/* Action confirmations, the import comparison, and the edit modal. */
 (function () {
   "use strict";
 
@@ -10,6 +10,20 @@
       event.preventDefault();
     }
   });
+
+  // The import comparison is rendered with the open attribute so that it works
+  // without JavaScript too. Where showModal is available it is reopened as a
+  // real modal, which brings the backdrop and traps the keyboard inside it.
+  var importDialog = document.getElementById("import-dialog");
+  if (importDialog && typeof importDialog.showModal === "function") {
+    importDialog.close();
+    importDialog.showModal();
+    // Esc must not slip out of a comparison waiting for a decision: closing it
+    // would leave the import waiting with nothing on screen to say so.
+    importDialog.addEventListener("cancel", function (event) {
+      event.preventDefault();
+    });
+  }
 
   var dialog = document.getElementById("edit-dialog");
   if (!dialog || typeof dialog.showModal !== "function") {

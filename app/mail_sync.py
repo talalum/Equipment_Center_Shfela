@@ -18,6 +18,7 @@ class SyncResult:
     applied: int = 0
     needs_review: int = 0
     ignored: int = 0
+    before_cutoff: int = 0
     duplicates: int = 0
     error: str | None = None
     ran_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -34,6 +35,8 @@ class SyncResult:
             parts.append(f"{self.needs_review} ממתינים לאישור")
         if self.ignored:
             parts.append(f"{self.ignored} ממרכז אחר")
+        if self.before_cutoff:
+            parts.append(f"{self.before_cutoff} מלפני תאריך תחילת הקליטה")
         if self.duplicates:
             parts.append(f"{self.duplicates} כבר היו במערכת")
         return " · ".join(parts)
@@ -56,7 +59,8 @@ def sync_once() -> SyncResult:
         try:
             # Bodies are fetched only for emails not yet in the database — a repeat scan is cheap.
             emails = fetcher.fetch_recent(
-                is_known=lambda mid: repo.find_issuance_by_message_id(mid) is not None
+                is_known=lambda mid: repo.find_issuance_by_message_id(mid) is not None,
+                since=repo.get_intake_cutoff(),
             )
         except Exception as exc:  # network/auth — must not bring the server down
             log.exception("Mail fetch failed")
@@ -76,6 +80,10 @@ def sync_once() -> SyncResult:
                 result.duplicates += 1
             elif outcome.status == ingest.APPLIED:
                 result.applied += 1
+            elif outcome.before_cutoff:
+                # Counted apart from `ignored`, whose line on the screen says
+                # "from another centre" — a wrong reason is worse than none.
+                result.before_cutoff += 1
             elif outcome.status == ingest.IGNORED:
                 result.ignored += 1
             else:

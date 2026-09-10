@@ -19,7 +19,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
 
-from app import config
+from app import config, localtime
 from app.ingest import synthetic_message_id
 
 log = logging.getLogger(__name__)
@@ -146,6 +146,7 @@ def fetch_recent(
     is_known: Callable[[str], bool] | None = None,
     days: int | None = None,
     limit: int = 500,
+    since: datetime | None = None,
 ) -> list[FetchedEmail]:
     """
     Fetches emails from the recent period, independently of the "seen" flag.
@@ -158,19 +159,36 @@ def fetch_recent(
 
     is_known takes a Message-ID and returns whether it has already been taken in.
     Bodies are fetched only for new emails, which keeps a repeat scan cheap.
+
+    `since` narrows the window further — the intake cutoff, so that emails which
+    would be left out of the count anyway are not dragged over the network. It is
+    a saving only: the binding decision is made on intake (app/ingest.py), never
+    here.
     """
     if not config.imap_configured():
         raise RuntimeError("חסרים פרטי חיבור לתיבה (IMAP_USER / IMAP_PASSWORD).")
 
     lookback = days if days is not None else config.LOOKBACK_DAYS
-    since = (datetime.now(timezone.utc) - timedelta(days=lookback)).strftime("%d-%b-%Y")
+    window_start = datetime.now(timezone.utc) - timedelta(days=lookback)
+    if since is not None and localtime.as_utc(since) > window_start:
+        window_start = localtime.as_utc(since)
+
+    # The date is taken in local time, because a cutoff of "from the 10th" means
+    # the 10th here — at 01:00 in Israel it is still the 9th in UTC.
+    #
+    # A day is then deliberately subtracted: IMAP compares whole dates in SINCE,
+    # in the mailbox timezone, and the mailbox need not agree with ours. On the
+    # exact boundary that would drop an email that really is inside the window —
+    # so the scan is made one day too wide, and the precise filtering is left to
+    # intake, where the full timestamp is available.
+    since_date = (localtime.to_local(window_start) - timedelta(days=1)).strftime("%d-%b-%Y")
 
     results: list[FetchedEmail] = []
     conn = imaplib.IMAP4_SSL(config.IMAP_HOST, config.IMAP_PORT)
     try:
         conn.login(config.IMAP_USER, config.IMAP_PASSWORD)
         conn.select(config.IMAP_FOLDER)
-        status, data = conn.search(None, "SINCE", since)
+        status, data = conn.search(None, "SINCE", since_date)
         if status != "OK":
             raise RuntimeError(f"חיפוש בתיבה נכשל: {status}")
 

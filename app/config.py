@@ -64,9 +64,44 @@ PORT = int(os.environ.get("PORT", "8000"))
 
 # --- General ---
 TZ_NAME = os.environ.get("TZ_NAME", "Asia/Jerusalem")
+
+# --- File upload (the standard-file import in /items) ---
+# Both limits are enforced on the server: web.py answers an over-sized request
+# body with 413, and main.py rejects a file whose suffix is not listed here. The
+# accept attribute of the form field is built from the same table, but it is
+# nothing more than a hint to the browser and cannot be relied upon.
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
+#: Permitted suffix -> the MIME type the browser reports for it. The old binary
+#: .xls is deliberately absent: it is a different format altogether and cannot
+#: be read without an external library.
+ALLOWED_UPLOAD_TYPES = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".csv": "text/csv",
+}
 
 
 def imap_configured() -> bool:
     """Whether there are enough details to attempt a mailbox connection."""
     return bool(IMAP_USER and IMAP_PASSWORD)
+
+
+def upload_accept() -> str:
+    """The accept attribute of the file field, both suffixes and MIME types."""
+    return ",".join(part for suffix, mime in ALLOWED_UPLOAD_TYPES.items() for part in (suffix, mime))
+
+
+def upload_types_label() -> str:
+    """The permitted types for the interface and for error messages, e.g. 'CSV'."""
+    return ", ".join(suffix.lstrip(".").upper() for suffix in ALLOWED_UPLOAD_TYPES)
+
+
+def upload_size_label() -> str:
+    """The size limit for the interface and for error messages, e.g. '8MB'."""
+    if MAX_UPLOAD_BYTES >= 1024 * 1024:
+        return f"{MAX_UPLOAD_BYTES / (1024 * 1024):g}MB"
+    return f"{MAX_UPLOAD_BYTES / 1024:g}KB"
+
+
+def upload_suffix_allowed(filename: str) -> bool:
+    """Whether the uploaded file name carries a permitted suffix."""
+    return filename.strip().lower().endswith(tuple(ALLOWED_UPLOAD_TYPES))

@@ -76,11 +76,18 @@ class SchemaGeneration(unittest.TestCase):
         self.assertNotIn("GENERATED ALWAYS", db._PK_POSTGRES)
 
     def test_every_table_gets_a_primary_key(self) -> None:
-        self.assertEqual(db.SCHEMA.count("{pk}"), 5)
+        """
+        Counted against the tables themselves, so a table added without a key
+        fails here. Most carry a generated id; `settings` is keyed by the
+        setting name, and has nothing to generate.
+        """
+        surrogate = db.SCHEMA.count("{pk}")
+        natural = db.SCHEMA.count("TEXT NOT NULL PRIMARY KEY")
+        self.assertEqual(surrogate + natural, db.SCHEMA.upper().count("CREATE TABLE"))
 
     def test_statement_splitting_matches_table_count(self) -> None:
         statements = db._split_statements(db.SCHEMA.replace("{pk}", db._PK_POSTGRES))
-        self.assertEqual(len(statements), 5)
+        self.assertEqual(len(statements), db.SCHEMA.upper().count("CREATE TABLE"))
         self.assertTrue(all(s.upper().startswith(("CREATE", "--")) for s in statements))
 
 

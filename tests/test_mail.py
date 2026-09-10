@@ -7,7 +7,7 @@ import unittest
 from email.message import EmailMessage
 from unittest import mock
 
-from tests.base import SAMPLE_EMAIL
+from tests.base import SAMPLE_EMAIL, DBTestCase
 
 from app import config
 from app.mail import fetcher
@@ -214,7 +214,9 @@ class FetchRecent(unittest.TestCase):
         self.assertIn("חסרים פרטי חיבור", str(ctx.exception))
 
 
-class SyncHandlesFailures(unittest.TestCase):
+class SyncHandlesFailures(DBTestCase):
+    """A database is needed because the fetch reads the intake cutoff from it."""
+
     def test_connection_error_is_reported_not_raised(self) -> None:
         """A network or authentication failure must not bring the server down."""
         from app import mail_sync

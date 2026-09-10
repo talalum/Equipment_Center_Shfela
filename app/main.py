@@ -5,11 +5,10 @@ import logging
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app import auth, config, db, importer, ingest, inventory, mail_sync, repo, scheduler
+from app import auth, config, db, importer, ingest, inventory, localtime, mail_sync, repo, scheduler
 from app.db import init_db
 from app.parsing.normalize import normalize_sku
 from app.web import Request, Response, Router, make_wsgi_app, safe_redirect_target
@@ -17,28 +16,6 @@ from app.web import Request, Response, Router, make_wsgi_app, safe_redirect_targ
 log = logging.getLogger(__name__)
 
 
-def _local_timezone(name: str):
-    """
-    The timezone used for display.
-
-    Windows has no timezone database in the operating system, so ZoneInfo fails
-    there unless the tzdata package is installed. In that case we fall back to
-    the machine's own clock — better to show a correct time from the system than
-    to bring the server down over a date display.
-    """
-    try:
-        return ZoneInfo(name)
-    except Exception:
-        fallback = datetime.now().astimezone().tzinfo
-        log.warning(
-            'Timezone "%s" not found (common on Windows without the tzdata package) — '
-            "showing the machine clock instead. To install: pip install tzdata",
-            name,
-        )
-        return fallback
-
-
-LOCAL_TZ = _local_timezone(config.TZ_NAME)
 TEMPLATES_DIR = config.BASE_DIR / "app" / "templates"
 STATIC_DIR = config.BASE_DIR / "app" / "static"
 
@@ -52,16 +29,30 @@ env = Environment(
 )
 
 
-def _local_dt(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(LOCAL_TZ).strftime("%d/%m/%Y %H:%M")
+def asset(name: str) -> str:
+    """A static URL carrying the file's own timestamp.
+
+    Static files are served with an hour of caching, so without this a changed
+    stylesheet reaches a browser that is still holding the previous one — the
+    new markup styled by the old rules. The stamp changes with the file, which
+    makes the browser fetch it, and stays put otherwise, so the caching is
+    still worth having.
+    """
+    try:
+        stamp = int((STATIC_DIR / name).stat().st_mtime)
+    except OSError:
+        return f"/static/{name}"
+    return f"/static/{name}?v={stamp}"
 
 
-env.filters["local_dt"] = _local_dt
+env.filters["local_dt"] = localtime.format_dt
+env.globals["asset"] = asset
 env.globals["signed"] = lambda n: f"+{n}" if n > 0 else str(n)
+# The upload restrictions are read live, so the interface always shows what the
+# server actually enforces — see config.py.
+env.globals["upload_accept"] = config.upload_accept
+env.globals["upload_types"] = config.upload_types_label
+env.globals["upload_size"] = config.upload_size_label
 
 
 # ------------------------------------------------------------------ helpers
@@ -158,6 +149,12 @@ def dashboard(request: Request) -> Response:
     statuses = inventory.sort_statuses(statuses, sort=sort, direction=direction)
 
     pending_count = repo.count_issuances(ingest.NEEDS_REVIEW)
+
+    # The date field is offered pre-filled: with the cutoff in force if there is
+    # one, otherwise with the last reset to standard, which is the moment from
+    # which the past stopped counting.
+    cutoff = repo.get_intake_cutoff()
+    last_reset = repo.last_reset_at()
     return render(
         request,
         "dashboard.html",
@@ -169,6 +166,15 @@ def dashboard(request: Request) -> Response:
         sort=sort,
         direction=direction,
         pending_count=pending_count,
+        intake_cutoff=cutoff,
+        last_reset_at=last_reset,
+        cutoff_input=localtime.to_input_value(cutoff or last_reset),
+        # A reset newer than the cutoff means the past has moved on and the date
+        # has not — worth pointing out rather than leaving to be noticed.
+        cutoff_behind_reset=bool(last_reset and (cutoff is None or cutoff < last_reset)),
+        # How many issuances are being counted twice — the offer to clear them
+        # is only shown when there is something to clear.
+        cancellable_count=ingest.count_double_counted(cutoff) if cutoff else 0,
     )
 
 
@@ -222,6 +228,82 @@ def reset_all(request: Request) -> Response:
     return Response.redirect("/")
 
 
+# -------------------------------------------------------- intake cutoff
+
+
+@router.post("/settings/intake-cutoff")
+def intake_cutoff_save(request: Request) -> Response:
+    """
+    The date from which emails are taken into stock. See
+    `ingest.before_intake_cutoff` for why it exists.
+    """
+    if (redirect := login_required(request)) is not None:
+        return redirect
+
+    if request.get("clear"):
+        repo.set_intake_cutoff(None)
+        flash(request, f"ההגבלה בוטלה — נקלטים מיילים מכל {config.LOOKBACK_DAYS} הימים האחרונים.", "success")
+        return back(request)
+
+    moment = localtime.parse_input_value(request.get("cutoff"))
+    if moment is None:
+        flash(request, "תאריך לא תקין — לא נשמר שינוי.", "error")
+        return back(request)
+
+    repo.set_intake_cutoff(moment)
+    message = f"מעתה ייקלטו למלאי רק מיילים מ-{localtime.format_dt(moment)} והלאה."
+    # A date in the future blocks every email, and does it quietly — so it is
+    # allowed (a warehouse may well want a start line a week from now) but never
+    # without saying so.
+    if moment > datetime.now(timezone.utc):
+        flash(request, message + " התאריך עתידי, ולכן בינתיים לא ייקלט שום מייל.", "warn")
+    else:
+        flash(request, message, "success")
+    return back(request)
+
+
+@router.post("/settings/cancel-past")
+def cancel_past_issuances(request: Request) -> Response:
+    """
+    Takes the issuances from before the saved date out of the count. Deliberately
+    acts on the *saved* date and not on whatever is currently typed in the field,
+    so that what is confirmed is what happens.
+    """
+    if (redirect := login_required(request)) is not None:
+        return redirect
+
+    cutoff = repo.get_intake_cutoff()
+    if cutoff is None:
+        flash(request, "קודם יש לבחור תאריך ולשמור אותו.", "error")
+        return back(request)
+
+    result = ingest.cancel_double_counted(cutoff)
+    if not result.cancelled and not result.pending_closed:
+        flash(request, f"אין הנפקות שנגרעו פעמיים לפני {localtime.format_dt(cutoff)} — לא בוצע שינוי.")
+        return back(request)
+
+    parts = [f"בוטלה הספירה של {result.cancelled} הנפקות שנגרעו פעמיים"]
+    if result.items_affected:
+        parts.append(f"{result.items_affected} פריטים תוקנו")
+    if result.pending_closed:
+        parts.append(f"{result.pending_closed} הנפקות שהמתינו לאישור נסגרו")
+    message = " · ".join(parts) + "."
+
+    # The items this could not fix on its own are named, never left to be
+    # discovered — see ingest.cancel_double_counted.
+    if result.needs_recount:
+        listed = ", ".join(f"{sku} {name} (+{units})" for sku, name, units in result.needs_recount)
+        flash(
+            request,
+            f'{message} שימי לב: {listed} — נספרו ידנית אחרי קליטת ההנפקה, ולכן הם כעת גבוהים '
+            f'מדי בכמות שבסוגריים. יש לתקן אותם ב"עדכון מלאי".',
+            "warn",
+        )
+    else:
+        flash(request, message, "success")
+    return back(request)
+
+
 # -------------------------------------------------------------------- items
 
 
@@ -229,7 +311,16 @@ def reset_all(request: Request) -> Response:
 def items_page(request: Request) -> Response:
     if (redirect := login_required(request)) is not None:
         return redirect
-    return render(request, "items.html", items=repo.list_items(), last_import=repo.last_import_run())
+    return render(
+        request,
+        "items.html",
+        items=repo.list_items(),
+        last_import=repo.last_import_run(),
+        # Computed on every render rather than stored with the scan: the stock
+        # moves on its own as issuance emails arrive, and a comparison shown
+        # against yesterday's figures would be worse than none.
+        comparison=pending_comparison(),
+    )
 
 
 @router.post("/items/{item_id}/update")
@@ -267,17 +358,65 @@ def item_new(request: Request) -> Response:
     return back(request, "/items")
 
 
+def pending_comparison() -> importer.Comparison | None:
+    """The file waiting for approval, against the state of the system right now."""
+    pending = repo.get_pending_import()
+    if pending is None:
+        return None
+    return importer.compare(importer.from_payload(pending.filename, pending.payload))
+
+
 @router.post("/items/import")
 def items_import(request: Request) -> Response:
+    """
+    Reads the uploaded file and stops there. Nothing is written until the user
+    has seen the comparison and approved it — see /items/import/confirm.
+    """
     if (redirect := login_required(request)) is not None:
         return redirect
     upload = request.files.get("file")
     if upload is None or not upload.content:
         flash(request, "לא נבחר קובץ.", "error")
         return Response.redirect("/items")
-    result = importer.import_items(upload.content, upload.filename)
+    if not config.upload_suffix_allowed(upload.filename):
+        flash(request, f"אפשר להעלות קובץ {config.upload_types_label()} בלבד.", "error")
+        return Response.redirect("/items")
+
+    scanned = importer.scan(upload.content, upload.filename)
+    if not scanned.usable:
+        problems = " ".join(scanned.problems) or "לא נמצאו שורות נתונים בקובץ."
+        flash(request, f"הקובץ לא נקלט — {problems}", "error")
+        return Response.redirect("/items")
+
+    repo.save_pending_import(scanned.filename, importer.to_payload(scanned))
+    return Response.redirect("/items")
+
+
+@router.post("/items/import/confirm")
+def items_import_confirm(request: Request) -> Response:
+    """Approval of the comparison — the only place the file is actually written."""
+    if (redirect := login_required(request)) is not None:
+        return redirect
+
+    pending = repo.get_pending_import()
+    if pending is None:
+        flash(request, "אין ייבוא שממתין לאישור. ייתכן שכבר אושר או בוטל.", "error")
+        return Response.redirect("/items")
+
+    scanned = importer.from_payload(pending.filename, pending.payload)
+    result = importer.apply(scanned, with_stock=True)
+    repo.clear_pending_import()
     level = "error" if result.rejected and not result.total_ok else "success"
     flash(request, f"ייבוא הושלם — {result.summary()}.", level)
+    return Response.redirect("/items")
+
+
+@router.post("/items/import/discard")
+def items_import_discard(request: Request) -> Response:
+    if (redirect := login_required(request)) is not None:
+        return redirect
+    repo.clear_pending_import()
+    flash(request, "הייבוא בוטל — לא בוצע שום שינוי.")
     return Response.redirect("/items")
 
 

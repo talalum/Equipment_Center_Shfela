@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>כניסה — מרכז ציוד שפלה</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+  <script src="{{ asset('theme.js') }}"></script>
 </head>
 <body class="centered">
   <form class="card pad login" method="post" action="/login">
@@ -15,5 +16,7 @@
     <input type="hidden" name="next" value="{{ next }}">
     <button class="btn">כניסה</button>
   </form>
+  <button class="icon theme-toggle standalone" type="button" data-theme-toggle
+          title="מעבר למצב כהה" aria-label="מעבר למצב כהה"></button>
 </body>
 </html>
