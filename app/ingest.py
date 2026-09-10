@@ -94,11 +94,27 @@ def _classify(
             notes.append(f'מק"ט {line.raw_sku} ("{line.raw_name}") לא קיים במערכת.')
         lines.append((line.raw_sku, line.raw_name, line.qty, item.id if item else None))
 
-    if not parsed.has_items_section:
+    if not parsed.looks_like_issuance:
+        missing = (
+            f'לא נמצא בו המשפט "{fmt.issuance_marker}" ואף לא רשימת מוצרים'
+            if fmt.issuance_marker
+            else "לא נמצאה בו רשימת מוצרים"
+        )
         return (
             IGNORED,
-            "המייל אינו נראה כמו הודעת הנפקה — לא נמצאה בו רשימת מוצרים.",
+            f"המייל אינו נראה כמו הודעת הנפקה — {missing}.",
             "המייל אינו הודעת הנפקה ולכן לא נקלט.",
+            lines,
+        )
+    if not parsed.has_items_section:
+        # An issuance whose item list could not be found — an issuance to an
+        # organizational unit, or a changed template. It is not dropped: an
+        # email that identified itself as an issuance always ends up in front
+        # of a person, because an issuance quietly ignored is stock gone wrong.
+        return (
+            NEEDS_REVIEW,
+            "\n".join([*notes, "המייל נראה כהודעת הנפקה אך לא נמצאה בו רשימת המוצרים — נדרש טיפול ידני."]),
+            "המייל נראה כהודעת הנפקה אך לא ניתן היה לקרוא את רשימת המוצרים — ממתין לטיפול.",
             lines,
         )
     if parsed.center and not issuance_parser.center_matches(parsed, fmt):

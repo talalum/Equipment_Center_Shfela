@@ -91,8 +91,12 @@ def main() -> int:
             mark, detail = "✓", f"{len(parsed.lines)} items · issuer: {parsed.issuer or '—'}"
         elif parsed.ok:
             mark, detail = "•", f'another center: {parsed.center or "unknown"} — will not be counted'
-        else:
+        elif parsed.looks_like_issuance:
+            # An issuance (it carries the marker sentence) that could not be
+            # read — it waits for review rather than being dropped.
             mark, detail = "✗", parsed.errors[0]
+        else:
+            mark, detail = "-", "not an issuance email — ignored"
         print(f"  {mark} {item.subject or '(no subject)'}")
         print(f"      {detail}")
 

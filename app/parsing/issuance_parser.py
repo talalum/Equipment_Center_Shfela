@@ -40,10 +40,22 @@ class ParsedIssuance:
     #: email that failed to parse" (needs attention) from "not an issuance email"
     #: (safe to ignore).
     has_items_section: bool = False
+    #: Whether the sentence that every issuance email contains was found.
+    #: An issuance to an organizational unit arrives with no recipient name, so
+    #: this sentence — and not the greeting — is what says "this is an issuance".
+    has_marker: bool = False
 
     @property
     def ok(self) -> bool:
         return not self.errors and bool(self.lines)
+
+    @property
+    def looks_like_issuance(self) -> bool:
+        """
+        Whether this is an issuance notice at all, regardless of whether it
+        could be parsed. Anything else is not our business and is ignored.
+        """
+        return self.has_marker or self.has_items_section
 
 
 @dataclass(frozen=True)
@@ -55,6 +67,7 @@ class EmailFormat:
     center: re.Pattern[str]
     recipient: re.Pattern[str]
     expected_center: str
+    issuance_marker: str
 
 
 @lru_cache(maxsize=4)
@@ -69,6 +82,7 @@ def load_format(path: str | None = None) -> EmailFormat:
         center=re.compile(raw["center"]),
         recipient=re.compile(raw["recipient"]),
         expected_center=clean_text(raw.get("expected_center") or ""),
+        issuance_marker=clean_text(raw.get("issuance_marker") or ""),
     )
 
 
@@ -113,6 +127,11 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
 
     normalised = raw_text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [_clean_line(line) for line in normalised.split("\n")]
+
+    # Searched over the whole body joined into one line, so that a sentence
+    # broken across lines by the mail client is still found.
+    if fmt.issuance_marker:
+        result.has_marker = fmt.issuance_marker in clean_text(" ".join(lines))
 
     result.issuer = _first_match(lines, fmt.issuer, "issuer")
     result.center = _first_match(lines, fmt.center, "center")
