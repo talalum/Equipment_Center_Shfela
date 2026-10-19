@@ -5,9 +5,11 @@
 # After every change here — run the tests and paste a real email on the /paste
 # screen to verify.
 
-# The item list is read between these two anchors. Both must be present.
+# The item list is read between its heading and the first matching end anchor.
 items_start: "המוצרים שהונפקו:"
-items_end: "שם המנפיק:"
+items_end:
+  - "שם המנפיק:"
+  - "בברכה"
 
 # Every non-empty line between the anchors must match this expression, otherwise
 # the whole issuance goes to review and does not enter stock.
@@ -16,16 +18,21 @@ item_line: '^(?P<name>.+?),\s*מק["״]?ט:\s*(?P<sku>[\w\-.]+)\s*[-–—]\s*כ
 # Single fields. Scanned across the whole email body.
 issuer: '^\s*שם המנפיק:\s*(?P<issuer>.+?)\s*$'
 center: '^\s*מרכז ציוד:\s*(?P<center>.+?)\s*$'
-recipient: '^\s*שלום\s+(?P<recipient>.+?)\s*$'
+# "שלום וברכה" is a greeting, not a recipient name.
+recipient: '^\s*שלום\s+(?!וברכה\s*$)(?P<recipient>.+?)\s*$'
 
 # An email whose equipment center is not this one is stored as ignored and does
 # not touch stock.
 # Leave empty to accept from every center.
 expected_center: "מרכז ציוד שפלה"
 
-# A sentence that appears in every issuance email, with a recipient name or
-# without one. An email containing it is treated as an issuance even if the
-# item list could not be read — so an issuance to an organizational unit, which
-# arrives with no name, waits for review instead of being dropped silently.
-# Leave empty to identify an issuance by the item-list anchor alone.
-issuance_marker: "ההזמנה שלך מוכנה"
+# A regular issuance says "ההזמנה שלך מוכנה". An organizational issuance says
+# "ההזמנה על <unit> מוכנה"; the named unit becomes the recipient.
+# This is a regular expression. Leave it empty to identify an issuance only by
+# the item-list anchor.
+issuance_marker: 'ההזמנה (?:שלך|על\s+(?P<unit>.{1,80}?)) מוכנה'
+
+# Organizational issuances do not contain an equipment-center line. When this
+# is true, a valid organizational issuance is treated as belonging to the
+# expected center. Other emails without a center still wait for manual review.
+organizational_is_ours: true
