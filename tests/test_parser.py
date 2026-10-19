@@ -56,7 +56,7 @@ class ParseEdgeCases(unittest.TestCase):
     def test_truncated_email_is_an_error(self) -> None:
         cut = SAMPLE_EMAIL.split("שם המנפיק:")[0]
         parsed = parse(cut)
-        self.assertTrue(any("לא נמצא העוגן" in e for e in parsed.errors))
+        self.assertTrue(any("לא נמצא עוגן סיום" in e for e in parsed.errors))
 
     def test_empty_body(self) -> None:
         self.assertTrue(parse("   ").errors)

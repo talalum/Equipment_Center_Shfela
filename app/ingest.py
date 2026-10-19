@@ -151,7 +151,7 @@ def _classify(
 
     if not parsed.looks_like_issuance:
         missing = (
-            f'לא נמצא בו המשפט "{fmt.issuance_marker}" ואף לא רשימת מוצרים'
+            'לא נמצא בו משפט מהצורה "ההזמנה ... מוכנה" ואף לא רשימת מוצרים'
             if fmt.issuance_marker
             else "לא נמצאה בו רשימת מוצרים"
         )
@@ -179,7 +179,7 @@ def _classify(
             "המייל שייך למרכז ציוד אחר ולכן לא נקלט למלאי.",
             lines,
         )
-    if not parsed.center:
+    if not parsed.center and not issuance_parser.trusted_without_center(parsed, fmt):
         return (
             NEEDS_REVIEW,
             "\n".join([*notes, 'לא זוהתה שורת "מרכז ציוד" במייל — נדרש אישור ידני.']),

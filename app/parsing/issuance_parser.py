@@ -44,6 +44,10 @@ class ParsedIssuance:
     #: An issuance to an organizational unit arrives with no recipient name, so
     #: this sentence — and not the greeting — is what says "this is an issuance".
     has_marker: bool = False
+    #: True only for the marker form "ההזמנה על <unit> מוכנה".
+    is_organizational: bool = False
+    #: The vehicle or organizational unit named in that marker.
+    unit: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -61,29 +65,40 @@ class ParsedIssuance:
 @dataclass(frozen=True)
 class EmailFormat:
     items_start: str
-    items_end: str
+    items_end: tuple[str, ...]
     item_line: re.Pattern[str]
     issuer: re.Pattern[str]
     center: re.Pattern[str]
     recipient: re.Pattern[str]
     expected_center: str
-    issuance_marker: str
+    issuance_marker: re.Pattern[str] | None
+    organizational_is_ours: bool = False
 
 
 @lru_cache(maxsize=4)
 def load_format(path: str | None = None) -> EmailFormat:
     fmt_path = Path(path) if path else config.EMAIL_FORMAT_PATH
     raw = yaml.safe_load(fmt_path.read_text(encoding="utf-8"))
+    raw_end = raw["items_end"]
+    items_end = tuple(raw_end) if isinstance(raw_end, (list, tuple)) else (raw_end,)
+    marker = (raw.get("issuance_marker") or "").strip()
     return EmailFormat(
         items_start=raw["items_start"],
-        items_end=raw["items_end"],
+        items_end=items_end,
         item_line=re.compile(raw["item_line"]),
         issuer=re.compile(raw["issuer"]),
         center=re.compile(raw["center"]),
         recipient=re.compile(raw["recipient"]),
         expected_center=clean_text(raw.get("expected_center") or ""),
-        issuance_marker=clean_text(raw.get("issuance_marker") or ""),
+        issuance_marker=re.compile(marker) if marker else None,
+        organizational_is_ours=bool(raw.get("organizational_is_ours", False)),
     )
+
+
+def _find_first_anchor(lines: list[str], anchors: tuple[str, ...], start: int = 0) -> int:
+    """Returns the first matching end anchor after ``start``."""
+    matches = [index for anchor in anchors if (index := _find_anchor(lines, anchor, start)) != -1]
+    return min(matches) if matches else -1
 
 
 # When Gmail renders an HTML email as text, it wraps bold text in asterisks:
@@ -131,11 +146,19 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
     # Searched over the whole body joined into one line, so that a sentence
     # broken across lines by the mail client is still found.
     if fmt.issuance_marker:
-        result.has_marker = fmt.issuance_marker in clean_text(" ".join(lines))
+        match = fmt.issuance_marker.search(clean_text(" ".join(lines)))
+        result.has_marker = match is not None
+        if match and "unit" in fmt.issuance_marker.groupindex:
+            unit = clean_text(match.group("unit"))
+            if unit:
+                result.is_organizational = True
+                result.unit = unit
 
     result.issuer = _first_match(lines, fmt.issuer, "issuer")
     result.center = _first_match(lines, fmt.center, "center")
     result.recipient = _first_match(lines, fmt.recipient, "recipient")
+    if result.is_organizational:
+        result.recipient = result.unit
 
     start = _find_anchor(lines, fmt.items_start)
     if start == -1:
@@ -143,9 +166,10 @@ def parse(raw_text: str, fmt: EmailFormat | None = None) -> ParsedIssuance:
         return result
     result.has_items_section = True
 
-    end = _find_anchor(lines, fmt.items_end, start + 1)
+    end = _find_first_anchor(lines, fmt.items_end, start + 1)
     if end == -1:
-        result.errors.append(f'לא נמצא העוגן "{fmt.items_end}" — ייתכן שהמייל נחתך.')
+        anchors = " / ".join(fmt.items_end)
+        result.errors.append(f"לא נמצא עוגן סיום ({anchors}) — ייתכן שהמייל נחתך.")
         return result
 
     seen: dict[str, int] = {}
@@ -187,3 +211,9 @@ def center_matches(parsed: ParsedIssuance, fmt: EmailFormat | None = None) -> bo
     if not fmt.expected_center:
         return True
     return clean_text(parsed.center) == fmt.expected_center
+
+
+def trusted_without_center(parsed: ParsedIssuance, fmt: EmailFormat | None = None) -> bool:
+    """Whether a center-less organizational issuance may enter automatically."""
+    fmt = fmt or load_format()
+    return bool(parsed.is_organizational and parsed.unit and fmt.organizational_is_ours)

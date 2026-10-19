@@ -86,7 +86,10 @@ def main() -> int:
     recognised = 0
     for item in emails[:20]:
         parsed = issuance_parser.parse(item.body)
-        if parsed.ok and issuance_parser.center_matches(parsed):
+        if parsed.ok and (
+            issuance_parser.center_matches(parsed)
+            or (not parsed.center and issuance_parser.trusted_without_center(parsed))
+        ):
             recognised += 1
             mark, detail = "✓", f"{len(parsed.lines)} items · issuer: {parsed.issuer or '—'}"
         elif parsed.ok:
